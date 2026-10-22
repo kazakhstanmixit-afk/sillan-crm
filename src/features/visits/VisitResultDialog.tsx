@@ -242,9 +242,9 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
 
               <Section title="Фото">
                 <div className="sm:col-span-2">
-                  <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => { setFiles((f) => [...f, ...Array.from(e.target.files ?? [])]); e.target.value = '' }} />
+                  <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; setFiles((f) => [...f, ...picked]) }} />
                   <Button size="sm" icon={<ImagePlus className="size-4" />} onClick={() => fileInput.current?.click()}>Добавить фото</Button>
-                  {files.length > 0 && <span className="ml-2 text-sm text-slate-600">Выбрано: {files.length} <button type="button" className="text-rose-600 underline" onClick={() => setFiles([])}>убрать</button></span>}
+                  {files.length > 0 && <span className="ml-2 text-sm text-slate-600">Выбрано: {files.length} — загрузятся при сохранении <button type="button" className="text-rose-600 underline" onClick={() => setFiles([])}>убрать</button></span>}
                 </div>
               </Section>
 
