@@ -191,6 +191,7 @@ export interface Visit {
   next_contact_date: string | null
   comment: string | null
   status_reason: string | null
+  expansion_plans?: string | null
   rescheduled_to: string | null
   created_at: string
 }
@@ -198,7 +199,7 @@ export interface Visit {
 export interface Request {
   id: string
   number: string
-  kind: 'equipment' | 'parts'
+  kind: 'service' | 'equipment' | 'parts'
   location_id: string
   contact_id: string | null
   visit_id: string | null

@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Download } from 'lucide-react'
+import { Download, FileText, Plus } from 'lucide-react'
+import { downloadRequestsPdf } from './requestsPdf'
+import { LocationPickDialog } from '@/features/clients/LocationPickDialog'
+import { RequestFormModal } from './RequestFormModal'
 import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Pagination, Select, Spinner, useToast } from '@/components/ui'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
@@ -60,6 +63,24 @@ export default function RequestsPage() {
     },
   })
   const [exporting, setExporting] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const doPdf = async () => {
+    setPdfBusy(true)
+    try {
+      await downloadRequestsPdf(selected, {
+        status: (c) => d.requestStatus(c)?.name ?? c,
+        category: (id) => d.categoryName(id),
+        person: (id) => (id ? d.profileName(id) : '—'),
+      })
+    } catch (e) {
+      toast.error(e)
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+  const [newFor, setNewFor] = useState<string | null>(null)
   const doExport = async () => {
     setExporting(true)
     try {
@@ -94,12 +115,20 @@ export default function RequestsPage() {
   const rows = list.data?.rows ?? []
   return (
     <div>
-      <PageHeader title="Заявки" subtitle="Заявки в отдел оборудования и отдел запчастей. Новая заявка создаётся из карточки клиента или результата визита."
-        actions={<Button icon={<Download className="size-4" />} loading={exporting} disabled={!list.data?.total} onClick={doExport}>CSV</Button>} />
+      <PageHeader title="Заявки" subtitle="Заявки в отдел оборудования и отдел запчастей"
+        actions={<>
+          <Button icon={<FileText className="size-4" />} loading={pdfBusy} disabled={!selected.length} onClick={doPdf} title="Отметьте заявки галочками">
+            PDF{selected.length ? ` (${selected.length})` : ''}
+          </Button>
+          <Button icon={<Download className="size-4" />} loading={exporting} disabled={!list.data?.total} onClick={doExport}>CSV</Button>
+          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setPicking(true)}>Новая заявка</Button>
+        </>} />
+      <LocationPickDialog open={picking} onClose={() => setPicking(false)} title="Заявка: выберите клиента" onPick={(id) => { setPicking(false); setNewFor(id) }} />
+      <RequestFormModal open={!!newFor} onClose={() => setNewFor(null)} locationId={newFor ?? ''} />
       <Card className="mb-3" bodyClassName="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4">
         <Input className="col-span-2 sm:col-span-1" placeholder="№, название, артикул" defaultValue={f.q} onKeyDown={(e) => e.key === 'Enter' && set({ q: (e.target as HTMLInputElement).value })} onBlur={(e) => e.target.value !== f.q && set({ q: e.target.value })} aria-label="Поиск заявок" />
         <Select value={f.kind} onChange={(e) => set({ kind: e.target.value })} aria-label="Отдел">
-          <option value="">Оба отдела</option><option value="equipment">Оборудование</option><option value="parts">Запчасти</option>
+          <option value="">Все отделы</option><option value="service">Сервис</option><option value="parts">Запчасти</option><option value="equipment">Продажа оборудования</option>
         </Select>
         <Select value={f.status} onChange={(e) => set({ status: e.target.value })} aria-label="Статус">
           <option value="open">Открытые</option><option value="">Все статусы</option>
@@ -112,17 +141,21 @@ export default function RequestsPage() {
       </Card>
       <Card bodyClassName="p-0">
         {list.isLoading ? <Spinner /> : list.error ? <div className="p-4"><ErrorState error={list.error} onRetry={() => list.refetch()} /></div> : !rows.length ? (
-          <EmptyState title="Заявок нет">Заявки создаются из карточки клиента (кнопка «Заявка») или из результата визита.</EmptyState>
+          <EmptyState title="Заявок нет">Нажмите «Новая заявка» вверху. Заявку также можно создать из карточки клиента или по итогам визита.</EmptyState>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>Номер</th><th>Дата</th><th>Клиент</th><th>Что требуется</th><th>Кол-во</th><th>Бюджет</th><th>Срочность</th><th>Статус</th><th>Ответственный</th></tr></thead>
+                <thead><tr>
+                  <th className="w-8"><input type="checkbox" aria-label="Выбрать все на странице" checked={rows.length > 0 && rows.every((r) => selected.includes(r.id))}
+                    onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...rows.map((r) => r.id)])] : selected.filter((id) => !rows.some((r) => r.id === id)))} /></th>
+                  <th>Номер</th><th>Дата</th><th>Клиент</th><th>Что требуется</th><th>Кол-во</th><th>Бюджет</th><th>Срочность</th><th>Статус</th><th>Ответственный</th></tr></thead>
                 <tbody>
                   {rows.map((r) => {
                     const st = d.requestStatus(r.status_code)
                     return (
                       <tr key={r.id}>
+                        <td><input type="checkbox" aria-label={`Выбрать ${r.number}`} checked={selected.includes(r.id)} onChange={() => setSelected((s) => (s.includes(r.id) ? s.filter((x) => x !== r.id) : [...s, r.id]))} /></td>
                         <td className="whitespace-nowrap"><Link to={`/requests/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.number}</Link><div className="text-xs text-slate-500">{REQUEST_KIND_LABEL[r.kind]}</div></td>
                         <td className="whitespace-nowrap">{fmtDate(r.created_at)}</td>
                         <td>{r.location ? <Link to={`/clients/${r.location.id}`} className="hover:underline">{r.location.name}</Link> : '—'}</td>

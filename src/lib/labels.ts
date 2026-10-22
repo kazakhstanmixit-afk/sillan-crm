@@ -55,8 +55,16 @@ export const URGENCY_COLOR: Record<string, string> = {
 }
 
 export const REQUEST_KIND_LABEL: Record<string, string> = {
-  equipment: 'Оборудование',
+  service: 'Сервис',
   parts: 'Запчасти',
+  equipment: 'Продажа оборудования',
+}
+
+/** Полные названия отделов */
+export const REQUEST_DEPT_LABEL: Record<string, string> = {
+  service: 'Сервисный отдел',
+  parts: 'Отдел запчастей',
+  equipment: 'Отдел продаж (покупка оборудования)',
 }
 
 export const SOURCE_LABEL: Record<string, string> = {

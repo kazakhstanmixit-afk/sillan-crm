@@ -8,8 +8,9 @@ import { useDicts } from '@/lib/dictionaries'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
-import { ATTACHMENT_TYPES, compressImage, removeFile, signedUrls, uploadFile, validateFile } from '@/lib/files'
-import { REQUEST_KIND_LABEL, URGENCY_COLOR, URGENCY_LABEL } from '@/lib/labels'
+import { ATTACHMENT_TYPES, compressImage, normalizeFileType, removeFile, signedUrls, uploadFile, validateFile } from '@/lib/files'
+import { REQUEST_DEPT_LABEL, URGENCY_COLOR, URGENCY_LABEL } from '@/lib/labels'
+import { KIND_TEXT } from './RequestFormModal'
 import type { Request } from '@/lib/types'
 
 type Full = Request & { location: { id: string; name: string; city: string | null } | null; contact: { full_name: string | null; phone: string | null } | null }
@@ -72,7 +73,8 @@ export default function RequestPage() {
   const upload = useMutation({
     mutationFn: async (files: File[]) => {
       const errors: string[] = []
-      for (const raw of files) {
+      for (const original of files) {
+        const raw = normalizeFileType(original)
         const bad = validateFile(raw, ATTACHMENT_TYPES)
         if (bad) { errors.push(bad); continue }
         const f = raw.type.startsWith('image/') ? await compressImage(raw) : raw
@@ -113,7 +115,7 @@ export default function RequestPage() {
       <Link to="/requests" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800"><ArrowLeft className="size-4" /> Все заявки</Link>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">Заявка {r.number}</h1>
-        <Badge color="brand">{REQUEST_KIND_LABEL[r.kind]}</Badge>
+        <Badge color="brand">{REQUEST_DEPT_LABEL[r.kind]}</Badge>
         <Badge color={st?.color}>{st?.name ?? r.status_code}</Badge>
         <Badge color={URGENCY_COLOR[r.urgency]}>Срочность: {URGENCY_LABEL[r.urgency]}</Badge>
       </div>
@@ -124,13 +126,13 @@ export default function RequestPage() {
             <dl>
               <InfoRow label="Клиент">{r.location && <Link to={`/clients/${r.location.id}`} className="text-brand-700 hover:underline">{r.location.name}</Link>}{r.location?.city && `, ${r.location.city}`}</InfoRow>
               <InfoRow label="Контактное лицо">{r.contact && [r.contact.full_name, r.contact.phone].filter(Boolean).join(', ')}</InfoRow>
-              <InfoRow label={r.kind === 'equipment' ? 'Оборудование / решение' : 'Запчасть'}>{r.item_name}</InfoRow>
-              {r.kind === 'equipment' && <InfoRow label="Категория">{r.category_id ? d.categoryName(r.category_id) : null}</InfoRow>}
-              <InfoRow label={r.kind === 'equipment' ? 'Бренд' : 'Производитель'}>{r.brand}</InfoRow>
-              {r.kind === 'equipment' ? <InfoRow label="Модель">{r.model}</InfoRow> : <InfoRow label="Артикул">{r.article}</InfoRow>}
+              <InfoRow label={KIND_TEXT[r.kind].item}>{r.item_name}</InfoRow>
+              {r.kind !== 'parts' && <InfoRow label="Категория">{r.category_id ? d.categoryName(r.category_id) : null}</InfoRow>}
+              <InfoRow label={r.kind === 'parts' ? 'Производитель' : 'Бренд'}>{r.brand}</InfoRow>
+              {r.kind !== 'parts' ? <InfoRow label="Модель">{r.model}</InfoRow> : <InfoRow label="Артикул">{r.article}</InfoRow>}
               <InfoRow label="Количество">{r.quantity}</InfoRow>
               {r.kind === 'equipment' && <InfoRow label="Бюджет">{r.budget ? fmtMoney(r.budget) : null}</InfoRow>}
-              <InfoRow label="Описание">{r.description && <span className="whitespace-pre-line">{r.description}</span>}</InfoRow>
+              <InfoRow label={KIND_TEXT[r.kind].desc}>{r.description && <span className="whitespace-pre-line">{r.description}</span>}</InfoRow>
               <InfoRow label="Комментарий">{r.comment}</InfoRow>
               <InfoRow label="Инициатор">{d.profileName(r.initiator_id)}</InfoRow>
               <InfoRow label="Создана">{fmtDateTime(r.created_at)}</InfoRow>
