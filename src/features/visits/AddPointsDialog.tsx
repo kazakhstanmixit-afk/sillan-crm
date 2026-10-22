@@ -23,13 +23,15 @@ export function AddPointsDialog({ open, onClose, managerId, date, existing, only
   const [dq, setDq] = useState('')
   const [district, setDistrict] = useState('')
   const [direction, setDirection] = useState('')
+  // по умолчанию — клиенты сотрудника, чей это план; руководство может выбрать всех или без ответственного
+  const [owner, setOwner] = useState(managerId)
   const [sort, setSort] = useState<Sort>(anchors.length ? 'near' : 'stale')
   const [picked, setPicked] = useState<string[]>([])
   const [purpose, setPurpose] = useState('')
   const toast = useToast()
   const qc = useQueryClient()
   useEffect(() => {
-    if (open) { setQ(''); setDq(''); setPicked([]); setPurpose(''); setSort(anchors.length ? 'near' : 'stale') }
+    if (open) { setQ(''); setDq(''); setPicked([]); setPurpose(''); setSort(anchors.length ? 'near' : 'stale'); setOwner(managerId) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
   useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 300); return () => clearTimeout(t) }, [q])
@@ -37,11 +39,13 @@ export function AddPointsDialog({ open, onClose, managerId, date, existing, only
   const options = useQuery({ queryKey: ['clients', 'options'], queryFn: fetchFilterOptions, enabled: open, staleTime: 5 * 60_000 })
 
   const res = useQuery({
-    queryKey: ['plan-pick', managerId, dq, onlyOwn, district, direction, sort],
+    queryKey: ['plan-pick', managerId, dq, onlyOwn, owner, district, direction, sort],
     enabled: open,
     queryFn: async () => {
       let query = supabase.from('location_list').select('id,name,city,district,address,lat,lng,next_visit_date,last_visit_at,manager_name,direction_ids').is('archived_at', null)
       if (onlyOwn) query = query.eq('manager_id', managerId)
+      else if (owner === 'none') query = query.is('manager_id', null)
+      else if (owner) query = query.eq('manager_id', owner)
       if (dq) query = query.ilike('search_text', `%${searchPattern(dq).replace(/[\\%_]/g, (m) => '\\' + m)}%`)
       if (district) query = query.eq('district', district)
       if (direction) query = query.contains('direction_ids', [direction])
@@ -89,13 +93,20 @@ export function AddPointsDialog({ open, onClose, managerId, date, existing, only
           <option value="">Все направления</option>
           {d.activeDirections.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </Select>
-        <Select className="sm:col-span-2" value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Сортировка">
+        {!onlyOwn && (
+          <Select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Ответственный">
+            {d.managers.map((p) => <option key={p.id} value={p.id}>{p.full_name || p.email}{p.id === managerId ? ' — владелец плана' : ''}</option>)}
+            <option value="none">Без ответственного</option>
+            <option value="">Все клиенты</option>
+          </Select>
+        )}
+        <Select className={onlyOwn ? 'sm:col-span-2' : ''} value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Сортировка">
           <option value="near" disabled={!anchors.length}>Ближе к точкам плана{anchors.length ? '' : ' (сначала добавьте точку с координатами)'}</option>
           <option value="stale">Сначала давно не посещённые</option>
           <option value="name">По названию</option>
         </Select>
       </div>
-      <p className="mb-2 text-xs text-slate-500">{onlyOwn ? 'Показаны клиенты, закреплённые за сотрудником. ' : ''}Расстояние — по прямой до ближайшей точки плана.</p>
+      <p className="mb-2 text-xs text-slate-500">{onlyOwn || owner === managerId ? 'Показаны клиенты, закреплённые за сотрудником этого плана. ' : ''}Расстояние — по прямой до ближайшей точки плана.</p>
       {res.isLoading ? <Spinner /> : res.error ? <ErrorState error={res.error} /> : rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-500">Ничего не найдено</p>
       ) : (
@@ -112,7 +123,7 @@ export function AddPointsDialog({ open, onClose, managerId, date, existing, only
                     <span className="block text-xs text-slate-500">
                       {[r.district, r.address].filter(Boolean).join(', ')} · последний визит: {fmtDate(r.last_visit_at)}
                       {r.next_visit_date && ` · запланирован: ${fmtDate(r.next_visit_date)}`}
-                      {!onlyOwn && ` · ${r.manager_name ?? 'без ответственного'}`}
+                      {!onlyOwn && owner !== managerId && ` · ${r.manager_name ?? 'без ответственного'}`}
                     </span>
                   </span>
                 }
