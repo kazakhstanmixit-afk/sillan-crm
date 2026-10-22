@@ -9,6 +9,23 @@ export const ATTACHMENT_TYPES = [
   'application/vnd.ms-excel', 'application/msword',
 ]
 
+const EXT_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', pjpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf', csv: 'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword',
+}
+
+/**
+ * Привести тип файла к стандартному: часть телефонов и Windows отдают пустой тип
+ * или «image/jpg», а хранилище принимает только стандартные типы.
+ */
+export function normalizeFileType(f: File): File {
+  const ext = (f.name.match(/\.(\w+)$/)?.[1] ?? '').toLowerCase()
+  const fixed = f.type === 'image/jpg' || f.type === 'image/pjpeg' ? 'image/jpeg' : f.type || EXT_TYPES[ext] || ''
+  return fixed && fixed !== f.type ? new File([f], f.name, { type: fixed, lastModified: f.lastModified }) : f
+}
+
 export function validateFile(f: File, allowed: string[]): string | null {
   if (!allowed.includes(f.type)) return `«${f.name}»: недопустимый тип файла`
   if (f.size > MAX_FILE_BYTES) return `«${f.name}»: файл больше 10 МБ`
@@ -40,7 +57,14 @@ const extOf = (f: File) => (f.name.match(/\.(\w{2,5})$/)?.[1] ?? f.type.split('/
 export async function uploadFile(folder: 'locations' | 'requests', ownerId: string, f: File) {
   const path = `${folder}/${ownerId}/${crypto.randomUUID()}.${extOf(f)}`
   const { error } = await supabase.storage.from(FILES_BUCKET).upload(path, f, { contentType: f.type, upsert: false })
-  if (error) throw error
+  if (error) {
+    const m = error.message || ''
+    if (/row-level security|unauthorized|403/i.test(m)) throw new Error('Нет прав на загрузку в эту карточку (фото может добавлять ответственный за клиента или руководство)')
+    if (/bucket not found/i.test(m)) throw new Error('В Supabase нет хранилища crm-files — проверьте, что миграции применены полностью')
+    if (/mime|type/i.test(m)) throw new Error(`Хранилище не принимает тип файла ${f.type || '(неизвестный)'}`)
+    if (/size|too large|413/i.test(m)) throw new Error('Файл больше 10 МБ')
+    throw new Error(`Хранилище: ${m}`)
+  }
   return path
 }
 

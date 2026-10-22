@@ -3,11 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ImagePlus, Trash2 } from 'lucide-react'
 import { Button, Card, ConfirmDialog, Field, Input, Modal, QueryState, Textarea, useToast } from '@/components/ui'
 import { supabase } from '@/lib/supabase'
-import { unwrap } from '@/lib/errors'
+import { humanError, unwrap } from '@/lib/errors'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { fmtDateTime } from '@/lib/format'
-import { IMAGE_TYPES, compressImage, removeFile, signedUrls, uploadFile, validateFile } from '@/lib/files'
+import { IMAGE_TYPES, compressImage, normalizeFileType, removeFile, signedUrls, uploadFile, validateFile } from '@/lib/files'
 import type { Photo } from '@/lib/types'
 import { clientKeys } from '../api'
 
@@ -15,7 +15,8 @@ import { clientKeys } from '../api'
 export async function uploadLocationPhotos(locationId: string, files: File[], visitId?: string | null) {
   const errors: string[] = []
   let ok = 0
-  for (const raw of files) {
+  for (const original of files) {
+    const raw = normalizeFileType(original)
     const bad = validateFile(raw, IMAGE_TYPES)
     if (bad) { errors.push(bad); continue }
     const f = await compressImage(raw)
@@ -26,7 +27,7 @@ export async function uploadLocationPhotos(locationId: string, files: File[], vi
       ok++
     } catch (e) {
       if (path) await removeFile(path).catch(() => undefined) // не оставляем файл без записи
-      errors.push(`«${raw.name}»: ${(e as Error).message}`)
+      errors.push(`«${raw.name}»: ${humanError(e)}`)
     }
   }
   return { ok, errors }

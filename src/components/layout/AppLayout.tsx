@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  BarChart3, Briefcase, CalendarCheck, ClipboardList, FileInput, History, LayoutDashboard, LogOut, Menu, Settings, Users, Building2, X,
+  BarChart3, CalendarCheck, ClipboardList, FileInput, History, LayoutDashboard, LogOut, Menu, Settings, Users, Building2, X,
 } from 'lucide-react'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { ROLE_LABEL } from '@/lib/labels'
@@ -33,7 +33,6 @@ export function AppLayout() {
     { to: '/plan', label: 'План посещений', icon: CalendarCheck },
     { to: '/visits', label: 'История визитов', icon: History },
     { to: '/requests', label: 'Заявки', icon: ClipboardList },
-    { to: '/deals', label: 'Потенциальные сделки', icon: Briefcase },
     { to: '/team', label: 'Сотрудники и распределение', icon: Users, show: perms.view_team },
     { to: '/analytics', label: 'Аналитика', icon: BarChart3 },
     { to: '/settings', label: 'Настройки и справочники', icon: Settings },

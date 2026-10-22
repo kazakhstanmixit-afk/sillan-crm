@@ -6,7 +6,7 @@ import { PeriodFilters, type PeriodState } from '@/components/PeriodFilters'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
-import { fmtDate, fmtMoney, fmtNumber, startOfMonthISO, todayISO } from '@/lib/format'
+import { fmtDate, fmtNumber, startOfMonthISO, todayISO } from '@/lib/format'
 import { fetchFilterOptions } from '@/features/clients/api'
 import { URGENCY_COLOR, URGENCY_LABEL } from '@/lib/labels'
 
@@ -85,11 +85,10 @@ export default function DashboardPage() {
               <Stat label="Просрочено контактов" value={s.overdue_contacts} tone={s.overdue_contacts ? 'warn' : undefined} hint="Дата следующего контакта прошла" />
               <Stat label="Новых заявок" value={s.requests_new} onClick={() => nav('/requests?status=new')} />
               <Stat label="Заявок в работе" value={s.requests_in_work} onClick={() => nav('/requests')} />
-              <Stat label="Открытых сделок" value={s.deals_open} hint={`оценка ${fmtMoney(s.deals_open_amount)}`} onClick={() => nav('/deals')} />
-              <Stat label="Просрочено по сделкам" value={s.overdue_deals} tone={s.overdue_deals ? 'warn' : undefined} hint="Дата следующего действия прошла" />
+              <Stat label="Заявок за период" value={s.requests_created_period} onClick={() => nav('/requests?status=')} />
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className={`grid gap-4 ${perms.view_team ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
               <Card title="Точки по направлениям">
                 <BarList items={[...s.by_direction.map((x) => ({ label: x.name, value: x.count, onClick: () => nav(`/clients?direction=${x.id}`) })), ...(s.without_direction ? [{ label: 'Направление не указано', value: s.without_direction }] : [])]} />
                 <p className="mt-2 text-xs text-slate-400">Одна точка может относиться к нескольким направлениям.</p>
@@ -97,26 +96,12 @@ export default function DashboardPage() {
               <Card title="Точки по городам">
                 <BarList items={s.by_city.map((x) => ({ label: x.name, value: x.count, onClick: x.name !== 'Не указан' ? () => nav(`/clients?city=${encodeURIComponent(x.name)}`) : undefined }))} />
               </Card>
-              <Card title={perms.view_team ? 'Точки по менеджерам' : 'Сделки по стадиям'}>
-                {perms.view_team
-                  ? <BarList items={s.by_manager.map((x) => ({ label: x.name, value: x.count, onClick: () => nav(`/clients?manager=${x.id ?? 'none'}`) }))} />
-                  : <BarList items={s.deals_by_stage.map((x) => ({ label: x.name, value: x.count }))} />}
-              </Card>
+              {perms.view_team && (
+                <Card title="Точки по менеджерам">
+                  <BarList items={s.by_manager.map((x) => ({ label: x.name, value: x.count, onClick: () => nav(`/clients?manager=${x.id ?? 'none'}`) }))} />
+                </Card>
+              )}
             </div>
-            {perms.view_team && (
-              <Card title="Потенциальные сделки по стадиям">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-                  {s.deals_by_stage.map((x) => (
-                    <div key={x.code} className="rounded-md border border-slate-100 p-2">
-                      <div className="text-xs text-slate-500">{x.name}</div>
-                      <div className="text-lg font-semibold tabular-nums">{x.count}</div>
-                      <div className="text-xs text-slate-500">{fmtMoney(x.amount)}</div>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-2 text-xs text-slate-400">Суммы — оценка менеджеров, а не выручка.</p>
-              </Card>
-            )}
           </>
         )}
       </QueryState>

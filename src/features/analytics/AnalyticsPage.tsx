@@ -6,7 +6,7 @@ import { PeriodFilters, type PeriodState } from '@/components/PeriodFilters'
 import { usePerms } from '@/auth/AuthProvider'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
-import { fmtMoney, startOfMonthISO, todayISO } from '@/lib/format'
+import { startOfMonthISO, todayISO } from '@/lib/format'
 import { exportCsv } from '@/lib/export'
 import { ROLE_LABEL } from '@/lib/labels'
 import { fetchFilterOptions } from '@/features/clients/api'
@@ -24,9 +24,7 @@ const DEFINITIONS: [string, string][] = [
   ['Не состоялось', 'Визиты со статусом «Не состоялся» с плановой датой в периоде.'],
   ['Клиентов с контактом', 'Разные точки, где за период был хотя бы один выполненный визит.'],
   ['Создано заявок', 'Заявки в отделы, созданные сотрудником в периоде (визит заявкой не считается).'],
-  ['Выявлено сделок', 'Потенциальные сделки, созданные в периоде. Это не продажи.'],
-  ['Открытые сделки, оценка', 'Сумма предполагаемых сумм открытых сделок сотрудника. Не является выручкой.'],
-  ['Просрочено действий', 'Запланированные визиты на прошедшие даты + открытые сделки с прошедшей датой следующего действия + клиенты с прошедшей датой следующего контакта без нового визита.'],
+  ['Просрочено действий', 'Запланированные визиты на прошедшие даты + клиенты с прошедшей датой следующего контакта без нового визита.'],
 ]
 
 export default function AnalyticsPage() {
@@ -50,8 +48,6 @@ export default function AnalyticsPage() {
     { header: 'Не состоялось', value: (r) => r.visits_failed },
     { header: 'Клиентов с контактом', value: (r) => r.contacted_clients },
     { header: 'Создано заявок', value: (r) => r.requests_created },
-    { header: 'Выявлено сделок', value: (r) => r.deals_created },
-    { header: 'Открытые сделки (оценка), ₸', value: (r) => r.deals_open_amount },
     { header: 'Просрочено действий', value: (r) => r.overdue_actions },
   ], `analytics_${p.from}_${p.to}.csv`)
 
@@ -61,13 +57,12 @@ export default function AnalyticsPage() {
       <Card bodyClassName="p-3"><PeriodFilters value={p} onChange={setP} cities={options.data?.cities ?? []} /></Card>
       <QueryState query={dash}>
         {dash.data && (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
             <Stat label="Запланировано визитов" value={dash.data.visits_planned_period} />
             <Stat label="Выполнено визитов" value={dash.data.visits_done} />
             <Stat label="Выполнение плана" value={dash.data.visits_planned_period ? `${Math.round((dash.data.visits_done / dash.data.visits_planned_period) * 100)}%` : '—'} hint="Выполнено / запланировано" />
             <Stat label="Создано заявок" value={dash.data.requests_created_period} />
             <Stat label="Новых точек" value={dash.data.locations_new} />
-            <Stat label="Открытые сделки (оценка)" value={fmtMoney(dash.data.deals_open_amount)} />
           </div>
         )}
       </QueryState>
@@ -76,7 +71,7 @@ export default function AnalyticsPage() {
           <div className="overflow-x-auto">
             <table className="data-table">
               <thead>
-                <tr><th>Сотрудник</th><th>Клиентов</th><th>Запланировано</th><th>Выполнено</th><th>Не состоялось</th><th>С контактом</th><th>Заявок</th><th>Сделок</th><th>Открыто (оценка)</th><th>Просрочено</th></tr>
+                <tr><th>Сотрудник</th><th>Клиентов</th><th>Запланировано</th><th>Выполнено</th><th>Не состоялось</th><th>С контактом</th><th>Заявок</th><th>Просрочено</th></tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
@@ -88,16 +83,13 @@ export default function AnalyticsPage() {
                     <td className="tabular-nums">{r.visits_failed}</td>
                     <td className="tabular-nums">{r.contacted_clients}</td>
                     <td className="tabular-nums">{r.requests_created}</td>
-                    <td className="tabular-nums">{r.deals_created}</td>
-                    <td className="whitespace-nowrap tabular-nums">{fmtMoney(r.deals_open_amount)}</td>
                     <td className={`tabular-nums ${r.overdue_actions ? 'font-medium text-rose-600' : ''}`}>{r.overdue_actions}</td>
                   </tr>
                 ))}
                 {rows.length > 1 && (
                   <tr className="bg-slate-50 font-medium">
                     <td>Итого</td>
-                    {(['assigned_clients', 'visits_planned', 'visits_done', 'visits_failed', 'contacted_clients', 'requests_created', 'deals_created'] as const).map((k) => <td key={k} className="tabular-nums">{total(k)}</td>)}
-                    <td className="whitespace-nowrap tabular-nums">{fmtMoney(total('deals_open_amount'))}</td>
+                    {(['assigned_clients', 'visits_planned', 'visits_done', 'visits_failed', 'contacted_clients', 'requests_created'] as const).map((k) => <td key={k} className="tabular-nums">{total(k)}</td>)}
                     <td className="tabular-nums">{total('overdue_actions')}</td>
                   </tr>
                 )}

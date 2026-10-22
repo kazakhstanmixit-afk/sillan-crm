@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Briefcase, CalendarPlus, ClipboardList, MapPin, MessageCircle, Phone } from 'lucide-react'
+import { ArrowLeft, CalendarPlus, ClipboardList, MapPin, MessageCircle, Phone } from 'lucide-react'
 import { Badge, Button, EmptyState, ErrorState, Spinner, Tabs } from '@/components/ui'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
@@ -20,7 +20,6 @@ import { SalesTab } from './tabs/SalesTab'
 import { HistoryTab } from './tabs/HistoryTab'
 import { AddToPlanDialog } from '@/features/visits/AddToPlanDialog'
 import { RequestFormModal } from '@/features/requests/RequestFormModal'
-import { DealFormModal } from '@/features/deals/DealFormModal'
 
 const TABS = ['overview', 'contacts', 'services', 'equipment', 'photos', 'comments', 'visits', 'sales', 'history'] as const
 type Tab = (typeof TABS)[number]
@@ -50,7 +49,6 @@ export default function ClientPage() {
 
   const [planOpen, setPlanOpen] = useState(false)
   const [requestOpen, setRequestOpen] = useState(false)
-  const [dealOpen, setDealOpen] = useState(false)
 
   if (loc.isLoading) return <Spinner />
   if (loc.error) return <ErrorState error={loc.error} onRetry={() => loc.refetch()} />
@@ -94,7 +92,6 @@ export default function ClientPage() {
               <>
                 <Button size="sm" icon={<CalendarPlus className="size-3.5" />} onClick={() => setPlanOpen(true)}>В план</Button>
                 <Button size="sm" icon={<ClipboardList className="size-3.5" />} onClick={() => setRequestOpen(true)}>Заявка</Button>
-                <Button size="sm" icon={<Briefcase className="size-3.5" />} onClick={() => setDealOpen(true)}>Сделка</Button>
               </>
             )}
           </div>
@@ -112,7 +109,7 @@ export default function ClientPage() {
           { value: 'photos', label: 'Фото' },
           { value: 'comments', label: 'Комментарии' },
           { value: 'visits', label: 'Визиты' },
-          { value: 'sales', label: 'Заявки и сделки' },
+          { value: 'sales', label: 'Заявки' },
           { value: 'history', label: 'История' },
         ]}
       />
@@ -124,12 +121,11 @@ export default function ClientPage() {
       {tab === 'photos' && <PhotosTab locationId={id} canEdit={canEdit} />}
       {tab === 'comments' && <CommentsTab locationId={id} canEdit={canEdit} />}
       {tab === 'visits' && <VisitsTab locationId={id} onPlan={() => setPlanOpen(true)} />}
-      {tab === 'sales' && <SalesTab locationId={id} onNewRequest={() => setRequestOpen(true)} onNewDeal={() => setDealOpen(true)} />}
+      {tab === 'sales' && <SalesTab locationId={id} onNewRequest={() => setRequestOpen(true)} />}
       {tab === 'history' && <HistoryTab locationId={id} />}
 
       <AddToPlanDialog open={planOpen} onClose={() => setPlanOpen(false)} locationIds={[id]} />
       <RequestFormModal open={requestOpen} onClose={() => setRequestOpen(false)} locationId={id} />
-      <DealFormModal open={dealOpen} onClose={() => setDealOpen(false)} locationId={id} />
     </div>
   )
 }

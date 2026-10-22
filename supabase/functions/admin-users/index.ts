@@ -47,13 +47,13 @@ Deno.serve(async (req) => {
 
   try {
     if (action === 'create' || action === 'invite') {
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: 'Укажите корректный e-mail' }, 400)
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: 'Укажите корректный логин или e-mail' }, 400)
       let userId: string
       if (action === 'create') {
         const password = String(body.password ?? '')
         if (password.length < 8) return json({ error: 'Пароль — не короче 8 символов' }, 400)
         const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { full_name: fullName } })
-        if (error) return json({ error: error.message.includes('already') ? 'Пользователь с таким e-mail уже есть' : error.message }, 400)
+        if (error) return json({ error: error.message.includes('already') ? 'Такой логин или e-mail уже занят' : error.message }, 400)
         userId = data.user.id
       } else {
         const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {

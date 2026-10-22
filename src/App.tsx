@@ -17,7 +17,6 @@ const PlanPage = lazy(() => import('@/features/visits/PlanPage'))
 const VisitsPage = lazy(() => import('@/features/visits/VisitsPage'))
 const RequestsPage = lazy(() => import('@/features/requests/RequestsPage'))
 const RequestPage = lazy(() => import('@/features/requests/RequestPage'))
-const DealsPage = lazy(() => import('@/features/deals/DealsPage'))
 const TeamPage = lazy(() => import('@/features/team/TeamPage'))
 const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage'))
 const SettingsPage = lazy(() => import('@/features/settings/SettingsPage'))
@@ -57,7 +56,7 @@ export function App() {
                   <Route path="visits" element={<VisitsPage />} />
                   <Route path="requests" element={<RequestsPage />} />
                   <Route path="requests/:id" element={<RequestPage />} />
-                  <Route path="deals" element={<DealsPage />} />
+                  <Route path="deals" element={<Navigate to="/requests" replace />} />
                   <Route path="team" element={<TeamPage />} />
                   <Route path="analytics" element={<AnalyticsPage />} />
                   <Route path="settings" element={<SettingsPage />} />

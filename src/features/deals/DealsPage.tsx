@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Badge, Card, EmptyState, ErrorState, PageHeader, Pagination, Select, Spinner, Stat } from '@/components/ui'
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Pagination, Select, Spinner, Stat } from '@/components/ui'
 import { usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { supabase } from '@/lib/supabase'
 import { fmtDate, fmtMoney, isOverdue } from '@/lib/format'
 import type { Deal } from '@/lib/types'
 import { DealFormModal } from './DealFormModal'
+import { Plus } from 'lucide-react'
+import { LocationPickDialog } from '@/features/clients/LocationPickDialog'
 
 type Row = Deal & { location: { id: string; name: string; city: string | null } | null }
 const PAGE = 50
@@ -56,11 +58,16 @@ export default function DealsPage() {
     },
   })
   const [edit, setEdit] = useState<Row | null>(null)
+  const [picking, setPicking] = useState(false)
+  const [newFor, setNewFor] = useState<string | null>(null)
   const rows = list.data?.rows ?? []
 
   return (
     <div>
-      <PageHeader title="Потенциальные сделки" subtitle="Коммерческие возможности. Предполагаемые суммы — это оценка, а не выручка. Новая сделка создаётся из карточки клиента или результата визита." />
+      <PageHeader title="Потенциальные сделки" subtitle="Коммерческие возможности. Предполагаемые суммы — это оценка, а не выручка."
+        actions={<Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setPicking(true)}>Новая сделка</Button>} />
+      <LocationPickDialog open={picking} onClose={() => setPicking(false)} title="Сделка: выберите клиента" onPick={(id) => { setPicking(false); setNewFor(id) }} />
+      <DealFormModal open={!!newFor} onClose={() => setNewFor(null)} locationId={newFor ?? ''} />
       <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {d.dealStages.filter((s) => s.is_active).map((s) => (
           <Stat key={s.code} label={s.name} value={summary.data?.[s.code]?.count ?? 0} hint={summary.data?.[s.code]?.amount ? fmtMoney(summary.data[s.code].amount) : undefined} onClick={() => set({ stage: s.code })} />
@@ -80,7 +87,7 @@ export default function DealsPage() {
       </Card>
       <Card bodyClassName="p-0">
         {list.isLoading ? <Spinner /> : list.error ? <div className="p-4"><ErrorState error={list.error} onRetry={() => list.refetch()} /></div> : !rows.length ? (
-          <EmptyState title="Сделок нет">Создайте сделку из карточки клиента (кнопка «Сделка») или по итогам визита.</EmptyState>
+          <EmptyState title="Сделок нет">Нажмите «Новая сделка» вверху. Сделку также можно создать из карточки клиента или по итогам визита.</EmptyState>
         ) : (
           <>
             <div className="overflow-x-auto">
