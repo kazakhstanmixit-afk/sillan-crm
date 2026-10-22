@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, CalendarX, CheckCircle2, ChevronLeft, ChevronRight, MapPin, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, CalendarX, Route, CheckCircle2, ChevronLeft, ChevronRight, MapPin, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from 'lucide-react'
 import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, PageHeader, QueryState, Select, Textarea, useToast } from '@/components/ui'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
@@ -11,6 +11,7 @@ import { fmtDate, fmtDateTime, mapHref, parseDateOnly, toISODate, todayISO } fro
 import { formatPhone, telHref } from '@/lib/phone'
 import { INTEREST_LABEL, VISIT_STATUS_COLOR, VISIT_STATUS_LABEL } from '@/lib/labels'
 import { fetchPlan, type PlanVisit } from './api'
+import { distanceKm, fmtKm, hasCoords, orderByDistance } from '@/lib/geo'
 import { AddPointsDialog } from './AddPointsDialog'
 import { VisitResultDialog } from './VisitResultDialog'
 import { VisitEditDialog, VisitStatusDialog, type StatusAction } from './VisitStatusDialog'
@@ -43,6 +44,30 @@ export default function PlanPage() {
     onError: (e) => { toast.error(e); setOrder(visits.map((v) => v.id)) },
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
   })
+  // примерный порядок объезда по координатам (по прямой); первая точка остаётся стартом
+  const withCoords = ordered.filter((v) => hasCoords(v.location))
+  const sortByDistance = () => {
+    if (withCoords.length < 3) return
+    const pts = withCoords.map((v) => ({ lat: v.location!.lat!, lng: v.location!.lng! }))
+    const idx = orderByDistance(pts, 0)
+    const next = [...idx.map((i) => withCoords[i].id), ...ordered.filter((v) => !hasCoords(v.location)).map((v) => v.id)]
+    const km = (o: string[]) => o.reduce((sum, id, i) => {
+      if (!i) return 0
+      const a = visits.find((x) => x.id === o[i - 1])?.location, b = visits.find((x) => x.id === id)?.location
+      return sum + (hasCoords(a) && hasCoords(b) ? distanceKm(a, b) : 0)
+    }, 0)
+    const before = km(order)
+    const after = km(next)
+    setOrder(next)
+    reorder.mutate(next, { onSuccess: () => toast.success(`Порядок обновлён: ≈ ${fmtKm(after)} по прямой вместо ${fmtKm(before)}`) })
+  }
+  const legKm = (i: number) => {
+    if (!i) return null
+    const a = ordered[i - 1]?.location, b = ordered[i]?.location
+    return hasCoords(a) && hasCoords(b) ? distanceKm(a, b) : null
+  }
+  const totalKm = ordered.reduce((s2, _, i) => s2 + (legKm(i) ?? 0), 0)
+
   const move = (i: number, dir: -1 | 1) => {
     const next = [...order]
     const j = i + dir
@@ -108,8 +133,21 @@ export default function PlanPage() {
           </Card>
         ) : (
           <>
-            <p className="mb-2 text-sm text-slate-600">Всего точек: {visits.length} · выполнено: {done} · осталось: {planned}</p>
-            <ol className="space-y-2">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-slate-600">
+                Всего точек: {visits.length} · выполнено: {done} · осталось: {planned}
+                {totalKm > 0 && <> · ≈ {fmtKm(totalKm)} по прямой</>}
+              </p>
+              {canManage && withCoords.length >= 3 && (
+                <Button size="sm" icon={<Route className="size-4" />} loading={reorder.isPending} onClick={sortByDistance} title="Первая точка — старт. Расставит остальные так, чтобы ехать к ближайшей следующей">
+                  Упорядочить по расстоянию
+                </Button>
+              )}
+            </div>
+            {canManage && withCoords.length >= 3 && (
+              <p className="mb-2 text-xs text-slate-500">Поставьте первой точку, с которой начинаете день, и нажмите «Упорядочить по расстоянию». Расстояния — по прямой, пробки и мосты не учитываются; порядок можно поправить стрелками.</p>
+            )}
+            <ol className="space-y-1">
               {ordered.map((v, i) => {
                 const loc = v.location
                 const address = loc?.confirmed_address ?? loc?.source_address
@@ -118,7 +156,9 @@ export default function PlanPage() {
                 const phone = contact?.phone ?? loc?.phones?.[0]
                 const isPlanned = v.status === 'planned'
                 return (
-                  <li key={v.id} className={`rounded-lg border bg-white p-3 ${v.status === 'done' ? 'border-emerald-200' : 'border-slate-200'}`}>
+                  <li key={v.id} className="list-none">
+                  {legKm(i) !== null && <div className="py-1 pl-4 text-xs text-slate-400">↓ {fmtKm(legKm(i)!)}</div>}
+                  <div className={`rounded-lg border bg-white p-3 ${v.status === 'done' ? 'border-emerald-200' : 'border-slate-200'}`}>
                     <div className="flex items-start gap-3">
                       <div className="flex flex-col items-center">
                         <span className="flex size-7 items-center justify-center rounded-full bg-brand-50 text-sm font-semibold text-brand-800">{i + 1}</span>
@@ -174,6 +214,7 @@ export default function PlanPage() {
                         </div>
                       )}
                     </div>
+                  </div>
                   </li>
                 )
               })}
@@ -190,7 +231,7 @@ export default function PlanPage() {
         )}
       </QueryState>
 
-      <AddPointsDialog open={addOpen} onClose={() => setAddOpen(false)} managerId={manager} date={date} existing={visits.filter((v) => ['planned', 'done', 'failed'].includes(v.status)).map((v) => v.location_id)} onlyOwn={!perms.view_all} />
+      <AddPointsDialog open={addOpen} onClose={() => setAddOpen(false)} managerId={manager} date={date} existing={visits.filter((v) => ['planned', 'done', 'failed'].includes(v.status)).map((v) => v.location_id)} onlyOwn={!perms.view_all} anchors={withCoords.map((v) => ({ lat: v.location!.lat!, lng: v.location!.lng! }))} />
       {resultFor && <VisitResultDialog visit={resultFor} locationName={resultFor.location?.name ?? ''} onClose={() => setResultFor(null)} />}
       {statusFor && <VisitStatusDialog visit={statusFor.v} action={statusFor.action} onClose={() => setStatusFor(null)} />}
       {editFor && <VisitEditDialog visit={editFor} onClose={() => setEditFor(null)} />}
