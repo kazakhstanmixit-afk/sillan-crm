@@ -1,13 +1,14 @@
 import { useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Upload } from 'lucide-react'
-import { Badge, Button, Card, Checkbox, ErrorState, Field, Input, Select, Spinner, useToast } from '@/components/ui'
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Upload } from 'lucide-react'
+import { Badge, Button, Card, Checkbox, ChipSelect, ErrorState, Field, Input, Select, Spinner, useToast } from '@/components/ui'
 import { supabase } from '@/lib/supabase'
 import { humanError, unwrap } from '@/lib/errors'
 import { useDicts } from '@/lib/dictionaries'
 import { formatPhone } from '@/lib/phone'
 import { parseFile, type ParsedFile, type ParsedSheet } from '@/lib/import/parse'
-import { CRM_FIELDS, autoMap, buildRow, type CrmField } from '@/lib/import/mapping'
+import { CRM_FIELDS, TEMPLATE_HEADERS, buildRow, suggestMapping, type CrmField, type MappingSuggestion } from '@/lib/import/mapping'
+import { exportCsv } from '@/lib/export'
 import { defaultAction, markInFileDuplicates, summarize, type ImportMode, type PlannedRow, type PreviewItem } from '@/lib/import/classify'
 import { downloadJobReport } from './report'
 
@@ -41,6 +42,16 @@ export function ImportWizard() {
   const [sheet, setSheet] = useState('')
   const [data, setData] = useState<ParsedSheet | null>(null)
   const [mapping, setMapping] = useState<Record<string, CrmField | ''>>({})
+  const [hints, setHints] = useState<Pick<MappingSuggestion, 'auto' | 'suggestions'>>({ auto: [], suggestions: {} })
+  const applyAutoMapping = (headers: string[]) => {
+    const r = suggestMapping(headers)
+    setMapping(r.mapping)
+    setHints({ auto: r.auto, suggestions: r.suggestions })
+  }
+  // направления Sillan: по ключевым словам из категории 2GIS и/или вручную для всех записей файла
+  const [useKeywords, setUseKeywords] = useState(true)
+  const [extraDirs, setExtraDirs] = useState<string[]>([])
+  const finalDirections = (r: PlannedRow) => [...new Set([...(useKeywords ? r.built.data.direction_ids : []), ...extraDirs])]
   const [source, setSource] = useState('2gis')
   const [mode, setMode] = useState<ImportMode>('add_new')
   const [updateFields, setUpdateFields] = useState<string[]>(['address', 'phones', 'website', 'coords', 'category', 'source_url'])
@@ -52,7 +63,7 @@ export function ImportWizard() {
   const [result, setResult] = useState<{ id: string; status: string; created_count: number; updated_count: number; skipped_count: number; conflict_count: number; error_count: number } | null>(null)
 
   const reset = () => {
-    setStep('upload'); setFileName(''); setParsed(null); setSheet(''); setData(null); setMapping({}); setRows([]); setError(null); setResult(null)
+    setStep('upload'); setFileName(''); setParsed(null); setSheet(''); setData(null); setMapping({}); setHints({ auto: [], suggestions: {} }); setRows([]); setError(null); setResult(null); setExtraDirs([]); setUseKeywords(true)
   }
 
   const onFile = async (f: File) => {
@@ -68,7 +79,7 @@ export function ImportWizard() {
       const s = await p.read(first || undefined)
       if (!s.rows.length) throw new Error('В файле не найдено строк с данными (первая строка — заголовки)')
       setData(s)
-      setMapping(autoMap(s.headers))
+      applyAutoMapping(s.headers)
       setStep('map')
     } catch (e) {
       setError(e)
@@ -84,7 +95,7 @@ export function ImportWizard() {
     try {
       const s = await parsed.read(name)
       setData(s)
-      setMapping(autoMap(s.headers))
+      applyAutoMapping(s.headers)
     } catch (e) {
       setError(e)
     } finally {
@@ -153,7 +164,7 @@ export function ImportWizard() {
       for (let i = 0; i < rows.length; i += BATCH) {
         const batch = rows.slice(i, i + BATCH).map((r) => ({
           row: r.row, action: r.action, location_id: r.location_id ?? null, message: r.message ?? null, raw: r.raw,
-          data: { ...r.built.data, external_id: r.built.data.external_id || null },
+          data: { ...r.built.data, external_id: r.built.data.external_id || null, direction_ids: finalDirections(r) },
         }))
         // повторная отправка безопасна: база пропускает уже обработанные строки
         let attempt = 0
@@ -185,6 +196,9 @@ export function ImportWizard() {
     }
   }
 
+  const downloadTemplate = () =>
+    exportCsv([] as Record<string, string>[], TEMPLATE_HEADERS.map((h) => ({ header: h, value: (r: Record<string, string>) => r[h] })), 'sillan_crm_import_template.csv')
+
   if (busy) return <Card><Spinner label={busy} /></Card>
 
   if (step === 'upload') {
@@ -201,7 +215,11 @@ export function ImportWizard() {
             <p className="text-sm text-slate-500">Первая строка — заголовки столбцов. Подходят выгрузки 2GIS и любые таблицы.</p>
           </div>
           <input ref={input} type="file" accept=".csv,.xlsx,.txt" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
-          <Button variant="primary" icon={<Upload className="size-4" />} onClick={() => input.current?.click()}>Выбрать файл</Button>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button variant="primary" icon={<Upload className="size-4" />} onClick={() => input.current?.click()}>Выбрать файл</Button>
+            <Button icon={<Download className="size-4" />} onClick={downloadTemplate}>Скачать шаблон CSV</Button>
+          </div>
+          <p className="max-w-lg text-xs text-slate-500">Шаблон не обязателен: выгрузку Apify (2GIS) можно загружать как есть — столбцы title, phoneValue, url, location/lat и другие сопоставятся автоматически.</p>
         </div>
         {error ? <div className="mt-3"><ErrorState error={error} /></div> : null}
         <p className="mt-3 text-xs text-slate-500">Автоматический сбор данных с 2GIS не выполняется: загружайте подготовленные выгрузки, полученные допустимым способом.</p>
@@ -230,12 +248,21 @@ export function ImportWizard() {
                 <tr>{data.headers.map((h) => (
                   <th key={h} className="min-w-44 normal-case">
                     <div className="mb-1 truncate text-slate-700" title={h}>{h}</div>
-                    <Select className="h-8 text-xs font-normal normal-case" value={mapping[h] ?? ''} onChange={(e) => setMapping({ ...mapping, [h]: e.target.value as CrmField | '' })} aria-label={`Поле для столбца ${h}`}>
+                    <Select className="h-8 text-xs font-normal normal-case" value={mapping[h] ?? ''} onChange={(e) => { setMapping({ ...mapping, [h]: e.target.value as CrmField | '' }); setHints((x) => ({ auto: x.auto.filter((a) => a !== h), suggestions: Object.fromEntries(Object.entries(x.suggestions).filter(([k]) => k !== h)) })) }} aria-label={`Поле для столбца ${h}`}>
                       <option value="">— не загружать —</option>
                       {CRM_FIELDS.map((f) => (
                         <option key={f.key} value={f.key} disabled={!f.multi && mapping[h] !== f.key && Object.values(mapping).includes(f.key)}>{f.label}</option>
                       ))}
                     </Select>
+                    {hints.auto.includes(h) && mapping[h] && <div className="mt-1"><Badge color="green">авто</Badge></div>}
+                    {hints.suggestions[h] && !mapping[h] && (
+                      <div className="mt-1 whitespace-normal text-[11px] font-normal normal-case text-amber-700">
+                        {hints.suggestions[h].reason}
+                        {!(!CRM_FIELDS.find((f) => f.key === hints.suggestions[h].field)?.multi && Object.values(mapping).includes(hints.suggestions[h].field)) && (
+                          <button type="button" className="ml-1 font-medium underline" onClick={() => { const f = hints.suggestions[h].field; setMapping({ ...mapping, [h]: f }) }}>Принять</button>
+                        )}
+                      </div>
+                    )}
                   </th>
                 ))}</tr>
               </thead>
@@ -246,6 +273,9 @@ export function ImportWizard() {
           </div>
         </Card>
 
+        {Object.keys(hints.suggestions).some((h) => !mapping[h]) && (
+          <p className="flex items-center gap-2 text-sm text-amber-700"><AlertTriangle className="size-4" />Есть неоднозначные столбцы — они не загружаются, пока вы не выберете поле вручную или не нажмёте «Принять».</p>
+        )}
         {!nameMapped && <p className="flex items-center gap-2 text-sm text-rose-600"><AlertTriangle className="size-4" />Выберите столбец для поля «Название».</p>}
         {nameMapped && !keyMapped && <p className="flex items-center gap-2 text-sm text-amber-700"><AlertTriangle className="size-4" />Нет ни внешнего ID, ни адреса — повторный импорт сможет находить совпадения только по телефону и названию.</p>}
         {error ? <ErrorState error={error} /> : null}
@@ -284,6 +314,14 @@ export function ImportWizard() {
           )}
         </Card>
 
+        <Card title="Направления Sillan">
+          <p className="mb-2 text-sm text-slate-600">Категория 2GIS сохраняется в карточке как есть (поле «Источник»). Направления Sillan — отдельная классификация; категория не всегда совпадает с направлением.</p>
+          <Checkbox label="Подбирать направления по ключевым словам из категории и названия (слова настраиваются в «Справочниках»)" checked={useKeywords} onChange={(e) => setUseKeywords(e.target.checked)} />
+          <p className="mb-1 mt-3 text-sm font-medium">Добавить всем записям этого файла:</p>
+          <ChipSelect options={d.activeDirections.map((x) => ({ value: x.id, label: x.name }))} value={extraDirs} onChange={setExtraDirs} />
+          <p className="mt-2 text-xs text-slate-500">У существующих записей направления только добавляются (в режиме обновления — если отмечено поле «Направления»), ничего не снимается.</p>
+        </Card>
+
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
           {(['create', 'update', 'merge', 'skip', 'conflict', 'error'] as const).map((a) => (
             <button key={a} onClick={() => setFilter(a)} className={`rounded-lg border bg-white p-3 text-left ${filter === a ? 'border-brand-500' : 'border-slate-200'}`}>
@@ -317,7 +355,8 @@ export function ImportWizard() {
                       <div className="font-medium">{r.built.data.name || <span className="text-rose-600">без названия</span>}</div>
                       <div className="text-xs text-slate-500">{[r.built.data.city, r.built.data.address].filter(Boolean).join(', ')}</div>
                       <div className="text-xs text-slate-500">{r.built.data.phones.map(formatPhone).join(', ')}</div>
-                      {r.built.data.direction_ids.length > 0 && <div className="mt-0.5 flex flex-wrap gap-1">{r.built.data.direction_ids.map((id) => <Badge key={id} color="brand">{d.directionName(id)}</Badge>)}</div>}
+                      {r.built.data.category && <div className="text-xs text-slate-500">2GIS: {r.built.data.category}</div>}
+                      {finalDirections(r).length > 0 && <div className="mt-0.5 flex flex-wrap gap-1">{finalDirections(r).map((id) => <Badge key={id} color="brand">{d.directionName(id)}</Badge>)}</div>}
                     </td>
                     <td><Badge color={ACTION_COLOR[r.action]}>{ACTION_LABEL[r.action]}</Badge></td>
                     <td className="max-w-md text-sm">
