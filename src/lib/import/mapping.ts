@@ -1,4 +1,4 @@
-import { splitPhones } from '@/lib/phone'
+import { normPhone, splitPhones } from '@/lib/phone'
 import type { Direction } from '@/lib/types'
 import { normText } from './normalize'
 
@@ -8,7 +8,7 @@ export type CrmField =
 
 export const CRM_FIELDS: { key: CrmField; label: string; multi?: boolean; hint?: string }[] = [
   { key: 'name', label: 'Название (обязательно)' },
-  { key: 'category', label: 'Категория / рубрика', hint: 'По ней подбираются направления' },
+  { key: 'category', label: 'Категория / рубрика 2GIS', multi: true, hint: 'Хранится как есть; несколько столбцов объединяются' },
   { key: 'city', label: 'Город' },
   { key: 'district', label: 'Район' },
   { key: 'address', label: 'Адрес' },
@@ -24,46 +24,104 @@ export const CRM_FIELDS: { key: CrmField; label: string; multi?: boolean; hint?:
   { key: 'bin', label: 'БИН' },
 ]
 
-const SYNONYMS: Record<CrmField, string[]> = {
-  name: ['название', 'наименование', 'name', 'организация', 'название организации', 'title', 'филиал'],
-  category: ['рубрика', 'рубрики', 'категория', 'категории', 'category', 'вид деятельности', 'деятельность'],
-  city: ['город', 'city', 'населенный пункт', 'нас пункт'],
-  district: ['район', 'district', 'район города'],
-  address: ['адрес', 'address', 'улица', 'полный адрес'],
-  phones: ['телефон', 'телефоны', 'phone', 'phones', 'тел', 'мобильный', 'контактный телефон'],
-  website: ['сайт', 'website', 'web', 'веб сайт', 'url сайта'],
-  lat: ['широта', 'lat', 'latitude'],
-  lng: ['долгота', 'lng', 'lon', 'longitude'],
-  coords: ['координаты', 'coordinates', 'геокоординаты'],
-  external_id: ['id', '2gis id', 'id 2gis', 'firm id', 'внешний id', 'id организации', 'id филиала', 'branch id'],
-  source_url: ['ссылка', 'url', 'link', 'ссылка на 2гис', 'ссылка на 2gis', 'ссылка на карточку'],
-  company_name: ['компания', 'бренд', 'сеть', 'группа компаний'],
-  legal_name: ['юр лицо', 'юридическое лицо', 'юр название', 'юридическое название'],
-  bin: ['бин', 'иин бин', 'bin'],
+/** Заголовок столбца → слова: «phoneValue/0» → «phone value 0», «location/lat» → «location lat» */
+export function normHeader(h: string): string {
+  return normText(h.replace(/([a-zа-я])([A-ZА-Я])/g, '$1 $2')) ?? ''
+}
+/** Заголовок без порядковых номеров: «rubrics/0/name» → «rubrics name» */
+const baseOf = (n: string) => n.split(' ').filter((t) => !/^\d+$/.test(t)).join(' ')
+
+interface Rule { field: CrmField; exact: string[]; suggest?: string[] }
+
+// Порядок важен: при совпадении берётся первое правило.
+// exact — назначается автоматически; suggest — только предлагается, пользователь подтверждает.
+const RULES: Rule[] = [
+  { field: 'name', exact: ['name', 'title', 'название', 'наименование', 'название организации', 'организация'], suggest: ['short name', 'филиал', 'краткое название'] },
+  { field: 'category', exact: ['category', 'categories', 'categories name', 'rubric', 'rubrics', 'rubrics name', 'рубрика', 'рубрики', 'категория', 'категории', 'вид деятельности'] },
+  { field: 'city', exact: ['city', 'город', 'населенный пункт', 'нас пункт', 'address city'] },
+  { field: 'district', exact: ['district', 'район', 'район города', 'address district'] },
+  { field: 'address', exact: ['address', 'адрес', 'full address', 'address name', 'полный адрес', 'address full'], suggest: ['street', 'улица'] },
+  { field: 'phones', exact: ['phone', 'phones', 'phone value', 'phone number', 'phone text', 'phones value', 'phones text', 'телефон', 'телефоны', 'контактный телефон', 'мобильный'] },
+  { field: 'website', exact: ['website', 'websites', 'site', 'сайт', 'веб сайт', 'url сайта'] },
+  { field: 'source_url', exact: ['url', 'link', 'source url', 'ссылка', 'ссылка на 2гис', 'ссылка на 2gis', 'ссылка на карточку', '2gis url'] },
+  { field: 'lat', exact: ['lat', 'latitude', 'location lat', 'point lat', 'coordinates lat', 'geo lat', 'широта'] },
+  { field: 'lng', exact: ['lng', 'lon', 'longitude', 'location lng', 'location lon', 'point lon', 'point lng', 'coordinates lng', 'geo lon', 'долгота'] },
+  { field: 'coords', exact: ['coordinates', 'координаты', 'геокоординаты'] },
+  { field: 'external_id', exact: ['id', 'external id', 'firm id', '2gis id', 'id 2gis', 'внешний id', 'id организации', 'id филиала', 'branch id'] },
+  { field: 'company_name', exact: [], suggest: ['brand', 'brand name', 'бренд', 'сеть', 'компания', 'группа компаний'] },
+  { field: 'legal_name', exact: ['legal name', 'юр лицо', 'юридическое лицо', 'юр название', 'юридическое название'] },
+  { field: 'bin', exact: ['bin', 'бин', 'иин бин'] },
+]
+
+export interface MappingSuggestion {
+  mapping: Record<string, CrmField | ''>
+  /** столбцы, сопоставленные автоматически (очевидное совпадение) */
+  auto: string[]
+  /** предложения, которые нужно подтвердить: столбец → поле и причина */
+  suggestions: Record<string, { field: CrmField; reason: string }>
 }
 
-/** Автоматическое сопоставление столбцов файла с полями CRM по названиям */
-export function autoMap(headers: string[]): Record<string, CrmField | ''> {
-  const used = new Set<CrmField>()
-  const out: Record<string, CrmField | ''> = {}
+const fieldLabel = (f: CrmField) => CRM_FIELDS.find((x) => x.key === f)?.label ?? f
+
+/**
+ * Сопоставление столбцов файла с полями CRM. Очевидные совпадения назначаются сразу
+ * (title → Название, phoneValue → Телефон, url → Ссылка на источник, location/lat → Широта),
+ * неоднозначные — только предлагаются.
+ */
+export function suggestMapping(headers: string[]): MappingSuggestion {
+  const mapping: Record<string, CrmField | ''> = {}
+  const auto: string[] = []
+  const suggestions: MappingSuggestion['suggestions'] = {}
+  const owner = new Map<CrmField, string>()
   for (const h of headers) {
-    const n = normText(h) ?? ''
-    let found: CrmField | '' = ''
-    for (const [field, syn] of Object.entries(SYNONYMS) as [CrmField, string[]][]) {
-      if (used.has(field) && field !== 'phones') continue
-      if (syn.some((s) => n === s)) { found = field; break }
+    mapping[h] = ''
+    const n = normHeader(h)
+    const base = baseOf(n)
+    const rule = RULES.find((r) => r.exact.includes(n) || r.exact.includes(base))
+    if (rule) {
+      const multi = CRM_FIELDS.find((f) => f.key === rule.field)?.multi
+      const taken = owner.get(rule.field)
+      if (!multi && taken) {
+        suggestions[h] = { field: rule.field, reason: `Похоже на «${fieldLabel(rule.field)}», но это поле уже взято из столбца «${taken}»` }
+      } else {
+        mapping[h] = rule.field
+        auto.push(h)
+        owner.set(rule.field, h)
+      }
+      continue
     }
-    if (!found) {
-      for (const [field, syn] of Object.entries(SYNONYMS) as [CrmField, string[]][]) {
-        if (used.has(field) && field !== 'phones') continue
-        if (syn.some((s) => s.length > 3 && n.includes(s))) { found = field; break }
+    const sug = RULES.find((r) => r.suggest?.includes(n) || r.suggest?.includes(base))
+      ?? RULES.find((r) => [...r.exact, ...(r.suggest ?? [])].some((s) => s.length > 3 && base.includes(s)))
+    if (sug) {
+      const taken = !CRM_FIELDS.find((f) => f.key === sug.field)?.multi && owner.get(sug.field)
+      suggestions[h] = {
+        field: sug.field,
+        reason: taken ? `Похоже на «${fieldLabel(sug.field)}», но это поле уже взято из столбца «${taken}»` : `Возможно, «${fieldLabel(sug.field)}» — подтвердите`,
       }
     }
-    if (found) used.add(found)
-    out[h] = found
   }
-  return out
+  // В выгрузке Apify столбец category — служебный код (service_station), а названия рубрик — в rubrics/N.
+  // Если рубрики есть, код не загружаем, только предлагаем.
+  const rubricCols = headers.filter((h) => ['rubric', 'rubrics', 'rubrics name', 'рубрика', 'рубрики'].includes(baseOf(normHeader(h))))
+  if (rubricCols.length) {
+    for (const h of headers) {
+      if (mapping[h] === 'category' && !rubricCols.includes(h)) {
+        mapping[h] = ''
+        auto.splice(auto.indexOf(h), 1)
+        suggestions[h] = { field: 'category', reason: 'В файле есть рубрики 2GIS (rubrics) — этот столбец обычно служебный код, загружать не нужно' }
+      }
+    }
+  }
+  return { mapping, auto, suggestions }
 }
+
+/** Только автоматические сопоставления (без неподтверждённых предложений) */
+export function autoMap(headers: string[]): Record<string, CrmField | ''> {
+  return suggestMapping(headers).mapping
+}
+
+/** Заголовки CSV-шаблона Sillan CRM */
+export const TEMPLATE_HEADERS = ['name', 'category', 'city', 'district', 'address', 'phone', 'website', 'latitude', 'longitude', 'external_id', 'source_url']
 
 export interface RowData {
   name: string
@@ -130,13 +188,24 @@ export function buildRow(raw: Record<string, string>, mapping: Record<string, Cr
 
   const bin = one('bin').replace(/\D/g, '')
   if (bin && bin.length !== 12) warnings.push('БИН не из 12 цифр — не будет сохранён')
-  const phones = get('phones').flatMap(splitPhones)
-  const category = one('category')
+  // телефоны из нескольких столбцов; одинаковые номера в разной записи считаются одним
+  const phones: string[] = []
+  const seenPhones = new Set<string>()
+  for (const p of get('phones').flatMap(splitPhones)) {
+    const k = normPhone(p) ?? p
+    if (!seenPhones.has(k)) { seenPhones.add(k); phones.push(p) }
+  }
+  // категорий может быть несколько (rubrics/0, rubrics/1…) — объединяем без повторов
+  const categoryParts: string[] = []
+  for (const c of get('category').flatMap((x) => x.split(/\s*[,;]\s*/))) {
+    if (c && !categoryParts.some((x) => x.toLowerCase() === c.toLowerCase())) categoryParts.push(c)
+  }
+  const category = categoryParts.join(', ')
 
   return {
     data: {
       name, company_name: one('company_name'), legal_name: one('legal_name'), bin: bin.length === 12 ? bin : '', category,
-      city: one('city'), district: one('district'), address: one('address'), phones: [...new Set(phones)], website: one('website'),
+      city: one('city'), district: one('district'), address: one('address'), phones, website: one('website'),
       lat, lng, external_id: one('external_id'), source_url: one('source_url'),
       direction_ids: matchDirections(`${category} ${name}`, directions),
     },
