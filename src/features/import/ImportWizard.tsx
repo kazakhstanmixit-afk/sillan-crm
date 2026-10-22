@@ -42,6 +42,7 @@ export function ImportWizard() {
   const [sheet, setSheet] = useState('')
   const [data, setData] = useState<ParsedSheet | null>(null)
   const [mapping, setMapping] = useState<Record<string, CrmField | ''>>({})
+  const [showAllCols, setShowAllCols] = useState(false)
   const [hints, setHints] = useState<Pick<MappingSuggestion, 'auto' | 'suggestions'>>({ auto: [], suggestions: {} })
   const applyAutoMapping = (headers: string[]) => {
     const r = suggestMapping(headers)
@@ -163,7 +164,8 @@ export function ImportWizard() {
       jobId = job.id
       for (let i = 0; i < rows.length; i += BATCH) {
         const batch = rows.slice(i, i + BATCH).map((r) => ({
-          row: r.row, action: r.action, location_id: r.location_id ?? null, message: r.message ?? null, raw: r.raw,
+          row: r.row, action: r.action, location_id: r.location_id ?? null, message: r.message ?? null,
+          raw: Object.fromEntries(Object.entries(r.raw).filter(([h, v]) => mapping[h] && v !== '')),
           data: { ...r.built.data, external_id: r.built.data.external_id || null, direction_ids: finalDirections(r) },
         }))
         // повторная отправка безопасна: база пропускает уже обработанные строки
@@ -229,6 +231,9 @@ export function ImportWizard() {
 
   if (step === 'map' && data) {
     const preview = data.rows.slice(0, 8)
+    const many = data.headers.length > 30
+    // при сотнях служебных столбцов (часы работы, отзывы, атрибуты) показываем только значимые
+    const cols = many && !showAllCols ? data.headers.filter((h) => mapping[h] || hints.suggestions[h]) : data.headers
     return (
       <div className="space-y-4">
         <Card title={`Файл: ${fileName}`} actions={<Button size="sm" variant="ghost" onClick={reset}>Другой файл</Button>}>
@@ -241,11 +246,20 @@ export function ImportWizard() {
           </div>
         </Card>
 
-        <Card title="Сопоставление столбцов" bodyClassName="p-0">
+        <Card
+          title="Сопоставление столбцов"
+          actions={many && <Checkbox label={`Показать все столбцы (${data.headers.length})`} checked={showAllCols} onChange={(e) => setShowAllCols(e.target.checked)} />}
+          bodyClassName="p-0"
+        >
+          {many && !showAllCols && (
+            <p className="border-b border-slate-100 px-4 py-2 text-xs text-slate-500">
+              Показаны столбцы, которые загружаются или похожи на нужные: {cols.length} из {data.headers.length}. Остальные (часы работы, отзывы, атрибуты и т.п.) не загружаются.
+            </p>
+          )}
           <div className="overflow-x-auto">
             <table className="data-table">
               <thead>
-                <tr>{data.headers.map((h) => (
+                <tr>{cols.map((h) => (
                   <th key={h} className="min-w-44 normal-case">
                     <div className="mb-1 truncate text-slate-700" title={h}>{h}</div>
                     <Select className="h-8 text-xs font-normal normal-case" value={mapping[h] ?? ''} onChange={(e) => { setMapping({ ...mapping, [h]: e.target.value as CrmField | '' }); setHints((x) => ({ auto: x.auto.filter((a) => a !== h), suggestions: Object.fromEntries(Object.entries(x.suggestions).filter(([k]) => k !== h)) })) }} aria-label={`Поле для столбца ${h}`}>
@@ -267,7 +281,7 @@ export function ImportWizard() {
                 ))}</tr>
               </thead>
               <tbody>
-                {preview.map((r, i) => <tr key={i}>{data.headers.map((h) => <td key={h} className="max-w-56 truncate text-xs">{r[h]}</td>)}</tr>)}
+                {preview.map((r, i) => <tr key={i}>{cols.map((h) => <td key={h} className="max-w-56 truncate text-xs">{r[h]}</td>)}</tr>)}
               </tbody>
             </table>
           </div>
