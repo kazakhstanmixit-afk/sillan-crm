@@ -13,7 +13,7 @@ export const CRM_FIELDS: { key: CrmField; label: string; multi?: boolean; hint?:
   { key: 'district', label: 'Район' },
   { key: 'address', label: 'Адрес' },
   { key: 'phones', label: 'Телефон', multi: true, hint: 'Можно выбрать несколько столбцов' },
-  { key: 'website', label: 'Сайт' },
+  { key: 'website', label: 'Сайт', multi: true, hint: 'Из нескольких столбцов берётся первый заполненный' },
   { key: 'lat', label: 'Широта' },
   { key: 'lng', label: 'Долгота' },
   { key: 'coords', label: 'Координаты одной строкой', hint: '«43.23, 76.94»' },
@@ -36,7 +36,7 @@ interface Rule { field: CrmField; exact: string[]; suggest?: string[] }
 // Порядок важен: при совпадении берётся первое правило.
 // exact — назначается автоматически; suggest — только предлагается, пользователь подтверждает.
 const RULES: Rule[] = [
-  { field: 'name', exact: ['name', 'title', 'название', 'наименование', 'название организации', 'организация'], suggest: ['short name', 'филиал', 'краткое название'] },
+  { field: 'name', exact: ['name', 'title', 'название', 'наименование', 'название организации', 'организация'], suggest: ['short name', 'brand short name', 'филиал', 'краткое название'] },
   { field: 'category', exact: ['category', 'categories', 'categories name', 'rubric', 'rubrics', 'rubrics name', 'рубрика', 'рубрики', 'категория', 'категории', 'вид деятельности'] },
   { field: 'city', exact: ['city', 'город', 'населенный пункт', 'нас пункт', 'address city'] },
   { field: 'district', exact: ['district', 'район', 'район города', 'address district'] },
@@ -90,8 +90,9 @@ export function suggestMapping(headers: string[]): MappingSuggestion {
       }
       continue
     }
+    // предлагаем только по точному совпадению со списком подсказок — без поиска по части слова,
+    // иначе brand/rating, brand/branchCount и подобные служебные столбцы засоряют экран
     const sug = RULES.find((r) => r.suggest?.includes(n) || r.suggest?.includes(base))
-      ?? RULES.find((r) => [...r.exact, ...(r.suggest ?? [])].some((s) => s.length > 3 && base.includes(s)))
     if (sug) {
       const taken = !CRM_FIELDS.find((f) => f.key === sug.field)?.multi && owner.get(sug.field)
       suggestions[h] = {
@@ -193,7 +194,10 @@ export function buildRow(raw: Record<string, string>, mapping: Record<string, Cr
   const seenPhones = new Set<string>()
   for (const p of get('phones').flatMap(splitPhones)) {
     const k = normPhone(p) ?? p
-    if (!seenPhones.has(k)) { seenPhones.add(k); phones.push(p) }
+    if (!seenPhones.has(k)) { seenPhones.add(k); phones.push(p); continue }
+    // из двух записей одного номера («+7‒708‒909‒95‒23» и «+77089099523») оставляем чистую
+    const i = phones.findIndex((x) => (normPhone(x) ?? x) === k)
+    if (/^\+?\d+$/.test(p) && !/^\+?\d+$/.test(phones[i])) phones[i] = p
   }
   // категорий может быть несколько (rubrics/0, rubrics/1…) — объединяем без повторов
   const categoryParts: string[] = []
