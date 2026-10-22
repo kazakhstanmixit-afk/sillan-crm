@@ -6,6 +6,7 @@ import {
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { ROLE_LABEL } from '@/lib/labels'
 import { cn } from '@/components/ui'
+import { displayLogin } from '@/lib/login'
 import { GlobalSearch } from './GlobalSearch'
 import { NotificationsBell } from './NotificationsBell'
 
@@ -63,7 +64,7 @@ export function AppLayout() {
         ))}
       </ul>
       <div className="border-t border-white/10 p-3 text-[13px]">
-        <div className="truncate font-medium text-white">{profile?.full_name || profile?.email}</div>
+        <div className="truncate font-medium text-white">{profile?.full_name || displayLogin(profile?.email)}</div>
         <div className="text-brand-200/70">{perms.role ? ROLE_LABEL[perms.role] : ''}</div>
         <button onClick={signOut} className="mt-2 inline-flex items-center gap-1.5 text-brand-200/80 hover:text-white">
           <LogOut className="size-3.5" /> Выйти
@@ -91,7 +92,7 @@ export function AppLayout() {
           <GlobalSearch key={location.pathname} />
           <NotificationsBell />
           <div className="hidden text-right text-[13px] leading-tight md:block">
-            <div className="font-medium text-slate-800">{profile?.full_name || profile?.email}</div>
+            <div className="font-medium text-slate-800">{profile?.full_name || displayLogin(profile?.email)}</div>
             <div className="text-slate-500">{perms.role ? ROLE_LABEL[perms.role] : ''}</div>
           </div>
         </header>

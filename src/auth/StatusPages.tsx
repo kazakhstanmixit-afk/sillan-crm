@@ -1,5 +1,6 @@
 import { useAuth } from './AuthProvider'
 import { Button } from '@/components/ui'
+import { displayLogin } from '@/lib/login'
 
 export function NotConfiguredPage() {
   return (
@@ -18,7 +19,7 @@ export function InactivePage() {
     <div className="flex min-h-full items-center justify-center p-6">
       <div className="max-w-md space-y-3 rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-700">
         <h1 className="text-lg font-semibold text-slate-900">Доступ ещё не открыт</h1>
-        <p>Учётная запись <b>{profile?.email}</b> создана, но не активирована. Попросите администратора CRM открыть доступ и назначить роль.</p>
+        <p>Учётная запись <b>{displayLogin(profile?.email)}</b> создана, но не активирована. Попросите администратора CRM открыть доступ и назначить роль.</p>
         <Button onClick={signOut}>Выйти</Button>
       </div>
     </div>

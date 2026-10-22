@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
 import { fmtDateTime, startOfMonthISO, todayISO, plural } from '@/lib/format'
 import { ROLE_LABEL } from '@/lib/labels'
+import { displayLogin } from '@/lib/login'
 
 type Tab = 'team' | 'territory' | 'history'
 
@@ -79,7 +80,7 @@ function TeamTab() {
                 const s = byId.get(p.id)
                 return (
                   <tr key={p.id}>
-                    <td><div className="font-medium">{p.full_name || '—'}</div><div className="text-xs text-slate-500">{p.email}</div></td>
+                    <td><div className="font-medium">{p.full_name || '—'}</div><div className="text-xs text-slate-500">{displayLogin(p.email)}</div></td>
                     <td>
                       {ROLE_LABEL[p.role]}
                       {p.role === 'rep' && (

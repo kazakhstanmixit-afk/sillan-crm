@@ -9,6 +9,7 @@ import { unwrap } from '@/lib/errors'
 import { fmtDate } from '@/lib/format'
 import { ROLE_LABEL } from '@/lib/labels'
 import type { Profile, Role } from '@/lib/types'
+import { LOGIN_RE, displayLogin, toAuthEmail } from '@/lib/login'
 
 /** Вызов серверной функции admin-users (service-role ключ только на сервере) */
 async function callAdminUsers(body: Record<string, unknown>) {
@@ -49,7 +50,7 @@ export function UsersTab() {
           <tbody>
             {list.map((p) => (
               <tr key={p.id} className={p.is_active ? '' : 'opacity-60'}>
-                <td><div className="font-medium">{p.full_name || '—'}{p.id === session?.user.id && <span className="text-xs text-slate-500"> (вы)</span>}</div><div className="text-xs text-slate-500">{p.email}</div></td>
+                <td><div className="font-medium">{p.full_name || '—'}{p.id === session?.user.id && <span className="text-xs text-slate-500"> (вы)</span>}</div><div className="text-xs text-slate-500">{displayLogin(p.email)}</div></td>
                 <td>{ROLE_LABEL[p.role]}</td>
                 <td className="space-x-1">
                   {p.role === 'rep' && (p.can_view_all ? <Badge color="blue">Видит всю базу</Badge> : <Badge>Только свои клиенты</Badge>)}
@@ -88,7 +89,7 @@ function EditUser({ profile, self, onClose }: { profile: Profile; self: boolean;
     onError: (e) => toast.error(e),
   })
   return (
-    <Modal open onClose={onClose} size="sm" title={profile.email ?? 'Пользователь'} dismissable={!save.isPending}
+    <Modal open onClose={onClose} size="sm" title={displayLogin(profile.email) || 'Пользователь'} dismissable={!save.isPending}
       footer={<><Button onClick={onClose} disabled={save.isPending}>Отмена</Button><Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>Сохранить</Button></>}>
       <div className="space-y-3">
         <Field label="ФИО">{(id) => <Input id={id} value={v.full_name} onChange={(e) => setV({ ...v, full_name: e.target.value })} />}</Field>
@@ -108,23 +109,31 @@ function CreateUser({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const toast = useToast()
   const [v, setV] = useState({ email: '', full_name: '', role: 'rep' as Role, can_view_all: false, can_import: false, mode: 'create' as 'create' | 'invite', password: '' })
+  const login = v.email.trim().toLowerCase()
   const mut = useMutation({
-    mutationFn: () => callAdminUsers({ action: v.mode, email: v.email, full_name: v.full_name, role: v.role, can_view_all: v.can_view_all, can_import: v.can_import, password: v.password, redirect_to: window.location.origin + '/settings' }),
+    mutationFn: () => callAdminUsers({ action: v.mode, email: v.mode === 'create' ? toAuthEmail(login) : login, full_name: v.full_name, role: v.role, can_view_all: v.can_view_all, can_import: v.can_import, password: v.password, redirect_to: window.location.origin + '/settings' }),
     onSuccess: () => { toast.success(v.mode === 'invite' ? 'Приглашение отправлено' : 'Сотрудник создан'); qc.invalidateQueries({ queryKey: ['dicts'] }); onClose() },
     onError: (e) => toast.error(e),
   })
-  const valid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email) && v.full_name.trim().length >= 2 && (v.mode === 'invite' || v.password.length >= 8)
+  const validLogin = v.mode === 'create'
+    ? LOGIN_RE.test(login) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login)
+    : /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login)
+  const valid = validLogin && v.full_name.trim().length >= 2 && (v.mode === 'invite' || v.password.length >= 8)
   return (
     <Modal open onClose={onClose} size="sm" title="Новый сотрудник" dismissable={!mut.isPending}
       footer={<><Button onClick={onClose} disabled={mut.isPending}>Отмена</Button><Button variant="primary" disabled={!valid} loading={mut.isPending} onClick={() => mut.mutate()}>{v.mode === 'invite' ? 'Отправить приглашение' : 'Создать'}</Button></>}>
       <div className="space-y-3">
-        <Field label="E-mail" required>{(id) => <Input id={id} type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}</Field>
+        <Field label={v.mode === 'create' ? 'Логин' : 'E-mail'} required
+          hint={v.mode === 'create' ? 'Латиница, цифры, точка, «_» или «-», от 2 символов (например erlan.t). Можно указать и e-mail.' : 'На этот адрес придёт письмо-приглашение'}
+          error={login && !validLogin ? (v.mode === 'create' ? 'Только латиница, цифры, «.», «_», «-»' : 'Введите корректный e-mail') : undefined}>
+          {(id) => <Input id={id} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />}
+        </Field>
         <Field label="ФИО" required>{(id) => <Input id={id} value={v.full_name} onChange={(e) => setV({ ...v, full_name: e.target.value })} />}</Field>
         <Field label="Роль">{(id) => <Select id={id} value={v.role} onChange={(e) => setV({ ...v, role: e.target.value as Role })}>{Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>}</Field>
         {v.role === 'rep' && <Checkbox label="Видит всю базу клиентов" checked={v.can_view_all} onChange={(e) => setV({ ...v, can_view_all: e.target.checked })} />}
         {v.role !== 'admin' && <Checkbox label="Может импортировать данные" checked={v.can_import} onChange={(e) => setV({ ...v, can_import: e.target.checked })} />}
         <Field label="Способ">
-          {(id) => <Select id={id} value={v.mode} onChange={(e) => setV({ ...v, mode: e.target.value as 'create' | 'invite' })}><option value="create">Задать пароль сейчас</option><option value="invite">Отправить приглашение на e-mail</option></Select>}
+          {(id) => <Select id={id} value={v.mode} onChange={(e) => setV({ ...v, mode: e.target.value as 'create' | 'invite' })}><option value="create">Логин и пароль (задаю сам)</option><option value="invite">Приглашение на e-mail</option></Select>}
         </Field>
         {v.mode === 'create' && <Field label="Пароль" required hint="Не короче 8 символов; сотрудник сможет сменить его в профиле">{(id) => <Input id={id} type="password" autoComplete="new-password" value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} />}</Field>}
       </div>

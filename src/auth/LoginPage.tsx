@@ -6,9 +6,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from './AuthProvider'
 import { Button, Field, Input } from '@/components/ui'
+import { toAuthEmail } from '@/lib/login'
 
 const schema = z.object({
-  email: z.string().trim().email('Введите корректный e-mail'),
+  email: z.string().trim().min(2, 'Введите логин или e-mail'),
   password: z.string().min(6, 'Минимум 6 символов'),
 })
 type Form = z.infer<typeof schema>
@@ -23,16 +24,16 @@ export function LoginPage() {
 
   const onSubmit = async (v: Form) => {
     setError(null)
-    const { error } = await supabase.auth.signInWithPassword({ email: v.email, password: v.password })
+    const { error } = await supabase.auth.signInWithPassword({ email: toAuthEmail(v.email), password: v.password })
     if (error) {
-      setError(/invalid/i.test(error.message) ? 'Неверный e-mail или пароль' : /fetch/i.test(error.message) ? 'Нет соединения с сервером' : 'Не удалось войти. Повторите попытку.')
+      setError(/invalid/i.test(error.message) ? 'Неверный логин или пароль' : /fetch/i.test(error.message) ? 'Нет соединения с сервером' : 'Не удалось войти. Повторите попытку.')
     }
   }
 
   const reset = async () => {
     const email = getValues('email')
     if (!z.string().email().safeParse(email).success) {
-      setError('Введите e-mail, чтобы восстановить пароль')
+      setError('Восстановление по почте доступно только для входа по e-mail. Если вы входите по логину — попросите администратора сменить пароль.')
       return
     }
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/settings?tab=profile' })
@@ -50,8 +51,8 @@ export function LoginPage() {
             <p className="text-xs text-slate-500">Вход для сотрудников</p>
           </div>
         </div>
-        <Field label="E-mail" error={errors.email?.message}>
-          {(id) => <Input id={id} type="email" autoComplete="username" aria-invalid={!!errors.email} {...register('email')} />}
+        <Field label="Логин или e-mail" error={errors.email?.message}>
+          {(id) => <Input id={id} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username" aria-invalid={!!errors.email} {...register('email')} />}
         </Field>
         <Field label="Пароль" error={errors.password?.message}>
           {(id) => <Input id={id} type="password" autoComplete="current-password" aria-invalid={!!errors.password} {...register('password')} />}

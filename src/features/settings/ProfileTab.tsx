@@ -5,6 +5,7 @@ import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
 import { ROLE_LABEL } from '@/lib/labels'
+import { displayLogin, isLoginAccount } from '@/lib/login'
 
 export function ProfileTab() {
   const { profile } = useAuth()
@@ -36,7 +37,7 @@ export function ProfileTab() {
     <div className="grid max-w-4xl gap-4 lg:grid-cols-2">
       <Card title="Профиль">
         <form onSubmit={(e) => { e.preventDefault(); save.mutate() }} className="space-y-3">
-          <Field label="E-mail">{(id) => <Input id={id} value={profile?.email ?? ''} disabled />}</Field>
+          <Field label={isLoginAccount(profile?.email) ? 'Логин' : 'E-mail'}>{(id) => <Input id={id} value={displayLogin(profile?.email)} disabled />}</Field>
           <Field label="Роль" hint="Роль назначает администратор">{(id) => <Input id={id} value={perms.role ? ROLE_LABEL[perms.role] : ''} disabled />}</Field>
           <Field label="ФИО" required>{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} maxLength={200} />}</Field>
           <Field label="Телефон">{(id) => <Input id={id} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={50} />}</Field>
