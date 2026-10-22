@@ -87,7 +87,7 @@ describe.skipIf(!TEST_DB_URL)('База CRM: схема, права и бизн�
     const l = await createLocation(repA, { name: 'Оборудование-Сервис' })
     const eq = await db.as(repA, async (q) => {
       const [cat] = await q(`select id from equipment_categories where name = 'Подъёмники'`)
-      const [brand] = await q(`insert into equipment_brands (name) values ('Launch') returning id`)
+      const [brand] = await q(`insert into equipment_brands (name) values ('Новый Бренд Х') returning id`)
       const [e] = await q(`insert into location_equipment (location_id, category_id, brand_id, name, model, quantity, condition)
                            values ($1, $2, $3, 'Двухстоечный подъёмник', 'TLT240', 2, 'working') returning id`, [l.id, cat.id, brand.id])
       await q(`insert into location_equipment (location_id, name, need) values ($1, 'Шиномонтажный станок', 'buy_more')`, [l.id])
@@ -494,5 +494,66 @@ describe.skipIf(!TEST_DB_URL)('База CRM: общие гарантии без�
       const [r] = await db.sql('select app.norm_phone($1) p', [p])
       expect(normPhone(p)).toBe(r.p)
     }
+  })
+})
+
+describe.skipIf(!TEST_DB_URL)('Отчёт о визите одной формой', () => {
+  let db: TestDb
+  let rep: string, other: string, loc: string, visit: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    rep = await db.createUser('Торговый', 'rep')
+    other = await db.createUser('Другой', 'rep')
+    loc = (await db.as(rep, (q) => q(`insert into locations (name, city, source_address) values ('СТО из 2GIS', 'Астана', 'ул. Сыганак, 2') returning id`)))[0].id
+    visit = await db.as(rep, async (q) => {
+      const [{ ensure_visit_plan: plan }] = await q('select ensure_visit_plan($1, $2)', [rep, '2026-11-10'])
+      await q('select add_plan_visits($1, $2)', [plan, [loc]])
+      return (await q('select id from visits where plan_id = $1', [plan]))[0].id
+    })
+  })
+  afterAll(async () => db?.close())
+
+  it('всё из отчёта попадает в карточку и в заявки; повторное сохранение без дублей', async () => {
+    const ids = await db.sql(`select (select id from services where name = 'Ходовая часть') hod, (select id from services where name = 'Шиномонтаж') shin,
+      (select id from equipment_categories where name = 'Подъёмники') lift, (select id from equipment_brands where name = 'Sillan') sillan,
+      (select id from equipment_brands where name = 'Hunter') hunter, (select id from equipment_categories where name = 'Стенды развал-схождения') align`)
+    const s = ids[0]
+    expect(s.hod && s.sillan && s.hunter).toBeTruthy()
+    const svcKey = randomUUID(), partKey = randomUUID(), saleKey = randomUUID()
+    const data = {
+      status: 'done', result: 'Познакомились, показали каталог', interest: 'high', expansion_plans: 'Весной открывают второй бокс на 3 поста',
+      card: {
+        name: 'СТО «Мотор»', legal_name: 'ТОО «Мотор Плюс»', bin: '123456789012', address: 'ул. Сыганак, 2, въезд со двора', posts_count: 4,
+        lpr: { full_name: 'Бахыт', position: 'Владелец', phone: '87015554433' },
+        service_ids: [s.hod, s.shin],
+        equipment: [{ category_id: s.lift, brand_id: s.sillan, quantity: 2 }, { category_id: s.align, brand_id: s.hunter }],
+      },
+      requests: [
+        { kind: 'service', item_name: 'Подъёмник не поднимается', category_id: s.lift, brand: 'Sillan', urgency: 'high', description: 'Течёт масло', client_request_id: svcKey },
+        { kind: 'parts', item_name: 'Колодки', article: 'GDB1550', quantity: 4, client_request_id: partKey },
+        { kind: 'equipment', item_name: 'Балансировочный станок', brand: 'Sillan', budget: 1200000, client_request_id: saleKey },
+      ],
+    }
+    await expectPgError(db.as(other, (q) => q('select save_visit_report($1, $2)', [visit, data])), 'Недостаточно прав')
+    const [{ r }] = await db.as(rep, (q) => q('select save_visit_report($1, $2) as r', [visit, data]))
+    expect(r.requests.map((x: { number: string }) => x.number.slice(0, 3)).sort()).toEqual(['ЗЧ-', 'ОБ-', 'СР-'])
+    await db.as(rep, (q) => q('select save_visit_report($1, $2)', [visit, data])) // повторное нажатие
+
+    const [l] = await db.sql(`select l.name, l.confirmed_address, l.source_address, l.posts_count, c.legal_name, c.bin
+                              from locations l left join companies c on c.id = l.company_id where l.id = $1`, [loc])
+    expect(l).toMatchObject({ name: 'СТО «Мотор»', confirmed_address: 'ул. Сыганак, 2, въезд со двора', source_address: 'ул. Сыганак, 2', posts_count: 4, legal_name: 'ТОО «Мотор Плюс»', bin: '123456789012' })
+    expect(await db.sql(`select full_name, decision_role from contacts where location_id = $1`, [loc])).toEqual([{ full_name: 'Бахыт', decision_role: 'decision_maker' }])
+    expect((await db.sql(`select count(*)::int n from location_services where location_id = $1`, [loc]))[0].n).toBe(2)
+    const eq = await db.sql(`select e.quantity, b.name brand from location_equipment e join equipment_brands b on b.id = e.brand_id where e.location_id = $1 order by b.name`, [loc])
+    expect(eq).toEqual([{ quantity: 1, brand: 'Hunter' }, { quantity: 2, brand: 'Sillan' }])
+    expect((await db.sql(`select count(*)::int n from comments where location_id = $1 and kind = 'expansion'`, [loc]))[0].n).toBe(1)
+    expect((await db.sql(`select count(*)::int n from requests where location_id = $1`, [loc]))[0].n).toBe(3)
+    const [vv] = await db.sql(`select status, expansion_plans from visits where id = $1`, [visit])
+    expect(vv).toEqual({ status: 'done', expansion_plans: 'Весной открывают второй бокс на 3 поста' })
+
+    // пустые поля при пересохранении не стирают карточку
+    await db.as(rep, (q) => q('select save_visit_report($1, $2)', [visit, { status: 'done', result: 'Уточнили', card: { name: '', address: '', posts_count: '', lpr: {} } }]))
+    const [l2] = await db.sql('select name, confirmed_address, posts_count from locations where id = $1', [loc])
+    expect(l2).toEqual({ name: 'СТО «Мотор»', confirmed_address: 'ул. Сыганак, 2, въезд со двора', posts_count: 4 })
   })
 })
