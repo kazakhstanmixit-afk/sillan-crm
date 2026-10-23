@@ -221,6 +221,11 @@ export interface Request {
   created_at: string
   updated_at: string
   closed_at: string | null
+  bitrix_status?: 'pending' | 'sent' | 'error' | null
+  bitrix_entity?: string | null
+  bitrix_id?: string | null
+  bitrix_error?: string | null
+  bitrix_sent_at?: string | null
 }
 
 export interface Deal {

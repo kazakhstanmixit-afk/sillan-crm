@@ -10,6 +10,7 @@ import { unwrap } from '@/lib/errors'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
 import { ATTACHMENT_TYPES, compressImage, normalizeFileType, removeFile, signedUrls, uploadFile, validateFile } from '@/lib/files'
 import { REQUEST_DEPT_LABEL, URGENCY_COLOR, URGENCY_LABEL } from '@/lib/labels'
+import { BITRIX_ENTITY_LABEL, bitrixToast, sendToBitrix } from '@/lib/bitrix'
 import { KIND_TEXT } from './RequestFormModal'
 import type { Request } from '@/lib/types'
 
@@ -99,6 +100,18 @@ export default function RequestPage() {
       await removeFile(a.storage_path)
     },
     onSuccess: () => { toast.success('Файл удалён'); setDeleting(null); invalidate() },
+    onError: (e) => toast.error(e),
+  })
+
+  const bitrix = useMutation({
+    mutationFn: () => sendToBitrix({ request_ids: [id] }),
+    onSuccess: (b) => {
+      if (b.disabled) toast.error('Интеграция с Битрикс24 не настроена (Настройки → Битрикс24)')
+      const t = bitrixToast(b)
+      if (t?.ok) toast.success(t.ok)
+      if (t?.error) toast.error(t.error)
+      invalidate()
+    },
     onError: (e) => toast.error(e),
   })
 
@@ -208,6 +221,18 @@ export default function RequestPage() {
               </div>
             </Card>
           )}
+          <Card title="Битрикс24">
+            {r.bitrix_status === 'sent' ? (
+              <p className="text-sm text-emerald-700">Отправлено: {BITRIX_ENTITY_LABEL[r.bitrix_entity ?? 'lead']} №{r.bitrix_id}{r.bitrix_sent_at && <span className="text-slate-500"> · {fmtDateTime(r.bitrix_sent_at)}</span>}</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {r.bitrix_status === 'error'
+                  ? <p className="text-rose-700">Не отправлено: {r.bitrix_error}</p>
+                  : <p className="text-slate-500">Ещё не отправлено.</p>}
+                {canWork && <Button size="sm" loading={bitrix.isPending} onClick={() => bitrix.mutate()}>Отправить в Битрикс24</Button>}
+              </div>
+            )}
+          </Card>
           <Card title="История статусов">
             <ol className="space-y-2 text-sm">
               {q.data?.history.map((h) => (

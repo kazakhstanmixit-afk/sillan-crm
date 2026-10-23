@@ -13,7 +13,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     projects: [
-      { extends: true, test: { name: 'unit', include: ['src/**/*.test.{ts,tsx}'] } },
+      { extends: true, test: { name: 'unit', include: ['src/**/*.test.{ts,tsx}', 'tests/unit/**/*.test.ts'] } },
       {
         extends: true,
         test: { name: 'db', include: ['tests/db/**/*.test.ts'], environment: 'node', fileParallelism: false, testTimeout: 30000, hookTimeout: 60000 },

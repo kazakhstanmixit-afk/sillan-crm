@@ -10,6 +10,7 @@ import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
 import { useDicts } from '@/lib/dictionaries'
 import { REQUEST_DEPT_LABEL, URGENCY_LABEL } from '@/lib/labels'
+import { bitrixToast, sendToBitrix } from '@/lib/bitrix'
 
 export type RequestKind = 'service' | 'parts' | 'equipment'
 
@@ -84,6 +85,13 @@ export function RequestFormModal({ open, onClose, locationId, visitId, defaultKi
     },
     onSuccess: (r) => {
       toast.success(`Заявка ${r.number} создана`)
+      // в Битрикс24 — в фоне, заявка уже сохранена
+      sendToBitrix({ request_ids: [r.id] }).then((b) => {
+        const t = bitrixToast(b)
+        if (t?.ok) toast.success(t.ok)
+        if (t?.error) toast.error(t.error)
+        qc.invalidateQueries({ queryKey: ['requests'] })
+      })
       qc.invalidateQueries({ queryKey: ['requests'] })
       qc.invalidateQueries({ queryKey: ['location', locationId] })
       onClose()

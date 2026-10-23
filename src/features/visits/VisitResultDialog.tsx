@@ -12,6 +12,7 @@ import { useDicts } from '@/lib/dictionaries'
 import { INTEREST_LABEL, REQUEST_DEPT_LABEL, URGENCY_LABEL } from '@/lib/labels'
 import type { Contact, Visit } from '@/lib/types'
 import { uploadLocationPhotos } from '@/features/clients/tabs/PhotosTab'
+import { bitrixToast, sendToBitrix } from '@/lib/bitrix'
 
 const optInt = z.union([z.literal(''), z.coerce.number().int('Целое число').min(0, 'Не меньше 0').max(500)])
 const eqItem = z.object({ on: z.boolean(), brand_id: z.string(), quantity: z.union([z.literal(''), z.coerce.number().int().min(1).max(999)]) })
@@ -160,7 +161,16 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
         } : {},
         requests,
       }
-      const res = unwrap(await supabase.rpc('save_visit_report', { p_visit: visit.id, p_data: payload })) as { requests: { number: string }[] }
+      const res = unwrap(await supabase.rpc('save_visit_report', { p_visit: visit.id, p_data: payload })) as { requests: { id: string; number: string }[] }
+      if (res.requests.length) {
+        // в Битрикс24 — в фоне, отчёт и заявки уже сохранены
+        sendToBitrix({ request_ids: res.requests.map((r) => r.id) }).then((b) => {
+          const t = bitrixToast(b)
+          if (t?.ok) toast.success(t.ok)
+          if (t?.error) toast.error(t.error)
+          qc.invalidateQueries({ queryKey: ['requests'] })
+        })
+      }
       let photoErrors: string[] = []
       if (files.length) photoErrors = (await uploadLocationPhotos(visit.location_id, files, visit.id)).errors
       return { numbers: res.requests.map((r) => r.number), photoErrors }

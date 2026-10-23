@@ -629,3 +629,27 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     expect((await db.sql(`select count(*)::int n from (select location_id from visits where status='planned' group by 1 having count(*) > 1) s`))[0].n).toBe(0)
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Битрикс24: статус отправки заявки', () => {
+  let db: TestDb
+  let rep: string, admin: string, loc: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    rep = await db.createUser('Торговый', 'rep')
+    admin = await db.createUser('Админ', 'admin')
+    loc = (await db.as(rep, (q) => q(`insert into locations (name) values ('СТО') returning id`)))[0].id
+  })
+  afterAll(async () => db?.close())
+
+  it('новая заявка — «ожидает отправки»; пользователь не может подделать статус, функция (service role) — может', async () => {
+    const [r] = await db.as(rep, (q) => q(`insert into requests (kind, location_id, item_name, bitrix_status, bitrix_id) values ('service', $1, 'Подъёмник', 'sent', '999') returning *`, [loc]))
+    expect(r).toMatchObject({ bitrix_status: 'pending', bitrix_id: null })
+    await db.as(admin, (q) => q(`update requests set bitrix_status = 'sent', bitrix_id = '1' where id = $1`, [r.id]))
+    expect((await db.sql('select bitrix_status from requests where id = $1', [r.id]))[0].bitrix_status).toBe('pending')
+    await db.sql(`update requests set bitrix_status = 'sent', bitrix_entity = 'lead', bitrix_id = '4521' where id = $1`, [r.id])
+    expect((await db.sql('select bitrix_status, bitrix_id from requests where id = $1', [r.id]))[0]).toEqual({ bitrix_status: 'sent', bitrix_id: '4521' })
+    const [s] = await db.as(rep, (q) => q(`select value->>'entity' e from app_settings where key = 'bitrix'`))
+    expect(s.e).toBe('lead')
+    await expectPgError(db.as(rep, (q) => q(`update app_settings set value = '{}' where key = 'bitrix' returning key`)).then((x) => { if (!x.length) throw new Error('row-level security') }), 'row-level security')
+  })
+})

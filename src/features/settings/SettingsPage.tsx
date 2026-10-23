@@ -5,8 +5,9 @@ import { usePerms } from '@/auth/AuthProvider'
 import { ProfileTab } from './ProfileTab'
 import { UsersTab } from './UsersTab'
 import { DictionariesTab } from './DictionariesTab'
+import { BitrixTab } from './BitrixTab'
 
-type Tab = 'profile' | 'users' | 'dicts'
+type Tab = 'profile' | 'users' | 'dicts' | 'bitrix'
 
 export default function SettingsPage() {
   const perms = usePerms()
@@ -23,12 +24,14 @@ export default function SettingsPage() {
           { value: 'profile', label: 'Мой профиль' },
           ...(perms.manage_users ? [{ value: 'users' as const, label: 'Пользователи и роли' }] : []),
           { value: 'dicts', label: 'Справочники' },
+          ...(perms.manage_users ? [{ value: 'bitrix' as const, label: 'Битрикс24' }] : []),
         ]}
       />
       <div className="mt-4">
         {tab === 'profile' && <ProfileTab />}
         {tab === 'users' && perms.manage_users && <UsersTab />}
         {tab === 'dicts' && <DictionariesTab />}
+        {tab === 'bitrix' && perms.manage_users && <BitrixTab />}
       </div>
     </div>
   )
