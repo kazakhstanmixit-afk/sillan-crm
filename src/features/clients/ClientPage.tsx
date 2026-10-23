@@ -65,7 +65,7 @@ export default function ClientPage() {
   const phone = primaryContact.data?.phone ?? l.phones[0]
   const whatsapp = primaryContact.data?.whatsapp ?? phone
   const address = l.confirmed_address ?? l.source_address
-  const map = mapHref({ lat: l.lat, lng: l.lng, address, city: l.city })
+  const map = mapHref({ lat: l.lat, lng: l.lng, address, city: l.city, externalId: l.external_id })
 
   return (
     <div className="space-y-4">

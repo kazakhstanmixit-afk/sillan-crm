@@ -49,17 +49,26 @@ export function isOverdue(date: string | null | undefined): boolean {
   return Boolean(date && date < todayISO())
 }
 
+const CITY_SLUG: Record<string, string> = {
+  астана: 'astana', 'нур-султан': 'astana', алматы: 'almaty', шымкент: 'shymkent', караганда: 'karaganda', актобе: 'aktobe',
+  тараз: 'taraz', павлодар: 'pavlodar', 'усть-каменогорск': 'ustkam', семей: 'semey', атырау: 'atyrau', костанай: 'kostanay',
+  кызылорда: 'kyzylorda', уральск: 'uralsk', петропавловск: 'petropavlovsk', актау: 'aktau', кокшетау: 'kokshetau', туркестан: 'turkestan',
+}
+
 /**
- * Ссылка «Карта» — Google Карты: по координатам (точная точка), иначе поиск по городу и адресу.
- * На телефоне открывается приложение Google Maps.
+ * Ссылка «Карта» — 2GIS, как в таблицах обхода: маршрут до точки (до карточки организации, если известен ID 2GIS),
+ * без координат — поиск по адресу. На телефоне открывается приложение 2GIS.
  */
-export function mapHref(opts: { lat?: number | null; lng?: number | null; address?: string | null; city?: string | null }): string | null {
+export function mapHref(opts: { lat?: number | null; lng?: number | null; address?: string | null; city?: string | null; externalId?: string | null }): string | null {
+  const slug = CITY_SLUG[(opts.city ?? '').trim().toLowerCase()] ?? 'astana'
+  const firm = opts.externalId && /^\d{10,}$/.test(opts.externalId) ? opts.externalId : null
   if (opts.lat != null && opts.lng != null) {
-    return `https://www.google.com/maps/search/?api=1&query=${opts.lat},${opts.lng}`
+    return `https://2gis.kz/${slug}/directions/points/${encodeURIComponent(`|${opts.lng},${opts.lat}${firm ? `;${firm}` : ''}`)}`
   }
+  if (firm) return `https://2gis.kz/${slug}/firm/${firm}`
   const q = [opts.city, opts.address].filter(Boolean).join(', ')
   if (!q) return null
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`
+  return `https://2gis.kz/${slug}/search/${encodeURIComponent(q)}`
 }
 
 export function plural(n: number, one: string, few: string, many: string): string {

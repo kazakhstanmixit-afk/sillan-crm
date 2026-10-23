@@ -108,7 +108,7 @@ export default function PlanPage() {
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="План посещений"
-        subtitle="Список точек на день в нужном порядке. Кнопка «Карта» открывает точку в Google Картах."
+        subtitle="Список точек на день в нужном порядке. Кнопка «Карта» открывает маршрут до точки в 2GIS."
         actions={canManage && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAddOpen(true)}>Добавить точки</Button>}
       />
       <Card className="mb-3" bodyClassName="flex flex-wrap items-center gap-2 p-3">
@@ -151,7 +151,7 @@ export default function PlanPage() {
               {ordered.map((v, i) => {
                 const loc = v.location
                 const address = loc?.confirmed_address ?? loc?.source_address
-                const map = loc ? mapHref({ lat: loc.lat, lng: loc.lng, address, city: loc.city }) : null
+                const map = loc ? mapHref({ lat: loc.lat, lng: loc.lng, address, city: loc.city, externalId: loc.external_id }) : null
                 const contact = q.data?.contacts[v.location_id]
                 const phone = contact?.phone ?? loc?.phones?.[0]
                 const isPlanned = v.status === 'planned'

@@ -14,6 +14,7 @@ export interface PlanLocation {
   phones: string[]
   status_code: string
   manager_id: string | null
+  external_id: string | null
 }
 export type PlanVisit = Visit & { location: PlanLocation | null }
 
@@ -23,7 +24,7 @@ export interface PlanData {
   contacts: Record<string, { full_name: string | null; phone: string | null }>
 }
 
-const LOC_FIELDS = 'id,name,city,district,source_address,confirmed_address,lat,lng,phones,status_code,manager_id'
+const LOC_FIELDS = 'id,name,city,district,source_address,confirmed_address,lat,lng,phones,status_code,manager_id,external_id'
 
 export async function fetchPlan(managerId: string, date: string): Promise<PlanData> {
   const plan = unwrap(await supabase.from('visit_plans').select('id,manager_id,plan_date,notes').eq('manager_id', managerId).eq('plan_date', date).maybeSingle()) as PlanData['plan']

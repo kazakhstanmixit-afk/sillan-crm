@@ -75,7 +75,7 @@ export function OverviewTab({ location: l, company, canEdit }: { location: Locat
   const [assignOpen, setAssignOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const save = useSaveLocation(l.id)
-  const map = mapHref({ lat: l.lat, lng: l.lng, address: l.confirmed_address ?? l.source_address, city: l.city })
+  const map = mapHref({ lat: l.lat, lng: l.lng, address: l.confirmed_address ?? l.source_address, city: l.city, externalId: l.external_id })
 
   const editBtn = (s: Section) =>
     canEdit && <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} onClick={() => setEdit(s)}>Изменить</Button>
