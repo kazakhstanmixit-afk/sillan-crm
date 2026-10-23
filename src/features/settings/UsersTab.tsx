@@ -21,7 +21,8 @@ async function callAdminUsers(body: Record<string, unknown>) {
     } catch {
       msg = ''
     }
-    if (!msg && /Failed to send|not found|404/i.test(error.message)) msg = 'Функция admin-users не развёрнута в Supabase (см. README, раздел «Пользователи»).'
+    if (!msg && /Failed to send/i.test(error.message)) msg = 'Не удаётся связаться с функцией admin-users: она не развёрнута в Supabase или у неё включена проверка JWT (выключите «Verify JWT» в настройках функции).'
+    if (!msg && /not found|404/i.test(error.message)) msg = 'Функция admin-users не найдена в Supabase — проверьте, что она называется именно admin-users.'
     throw new Error(msg || error.message)
   }
   if (data?.error) throw new Error(data.error)

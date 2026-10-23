@@ -185,6 +185,13 @@ await step('карточка клиента: контакт, оборудова�
   await shot('06-client-history')
 })
 
+await step('фото в карточке клиента: загрузка и показ', async () => {
+  await page.getByRole('tab', { name: 'Фото' }).click()
+  await page.locator('input[type=file]').setInputFiles(join(SHOTS, 'foto.png'))
+  await page.getByText('Загружено фото: 1').waitFor({ timeout: 15000 })
+  await page.locator('img[alt="Фото точки"]').first().waitFor({ timeout: 15000 })
+})
+
 await step('настройки, команда, аналитика открываются у администратора', async () => {
   await page.goto(base + '/settings')
   await page.getByRole('tab', { name: 'Справочники' }).click()
@@ -242,6 +249,8 @@ await step('отчёт о визите со смартфона: карточка
   await dlg.getByLabel(/Отдел запчастей/).check()
   await dlg.getByLabel(/Что нужно/).fill('Колодки тормозные')
   await dlg.getByLabel('Запланировать визит на').fill(tomorrow)
+  await dlg.locator('input[type=file]').setInputFiles(join(SHOTS, 'foto.png'))
+  await dlg.getByText(/Выбрано: 1/).waitFor()
   await shot('09-visit-report-mobile')
   await dlg.getByRole('button', { name: 'Сохранить', exact: true }).click()
   await page.getByText(/Отчёт сохранён\. Заявки: (СР|ЗЧ)-\d{6}, (СР|ЗЧ)-\d{6}/).first().waitFor({ timeout: 15000 })
@@ -253,6 +262,8 @@ await step('отчёт о визите со смартфона: карточка
   if (rq.map((x) => x.kind).join() !== 'parts,service') throw new Error('заявки: ' + rq.map((x) => x.kind).join())
   const { rows: lpr } = await db.query(`select full_name from contacts where location_id = $1 and decision_role = 'decision_maker'`, [l.id])
   if (lpr[0]?.full_name !== 'Бахыт') throw new Error('ЛПР не сохранён')
+  const { rows: ph } = await db.query(`select count(*)::int n from location_photos where location_id = $1 and visit_id is not null`, [l.id])
+  if (ph[0].n !== 1) throw new Error('фото из отчёта не сохранилось')
   await page.setViewportSize({ width: 1360, height: 900 })
 })
 

@@ -3,7 +3,9 @@
 // Service-role ключ используется ТОЛЬКО здесь, на сервере, и никогда не попадает в браузер.
 //
 // Развёртывание:  supabase functions deploy admin-users
-// Переменные SUPABASE_URL, SUPABASE_ANON_KEY и SUPABASE_SERVICE_ROLE_KEY Supabase передаёт функции автоматически.
+// SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY Supabase передаёт функции автоматически;
+// если ключа нет (новая система ключей) — добавьте секрет SERVICE_ROLE_KEY в Edge Functions → Secrets.
+// В настройках функции выключите «Verify JWT»: функция сама проверяет токен и роль администратора.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const cors = {
@@ -20,17 +22,20 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'Метод не поддерживается' }, 405)
 
-  const url = Deno.env.get('SUPABASE_URL')!
-  const anon = Deno.env.get('SUPABASE_ANON_KEY')!
-  const service = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  const authHeader = req.headers.get('Authorization') ?? ''
+  const url = Deno.env.get('SUPABASE_URL')
+  // секретный ключ: стандартная переменная Supabase или свой секрет SERVICE_ROLE_KEY (Edge Functions → Secrets)
+  const service = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || Deno.env.get('CRM_SECRET_KEY')
+  if (!url || !service) {
+    return json({ error: 'В функции нет секретного ключа. Supabase → Edge Functions → Secrets: добавьте SERVICE_ROLE_KEY (значение — Secret key из Settings → API Keys).' }, 500)
+  }
+  const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
+  if (!jwt) return json({ error: 'Не выполнен вход' }, 401)
 
-  // кто вызывает
-  const asCaller = createClient(url, anon, { global: { headers: { Authorization: authHeader } } })
-  const { data: userData, error: userErr } = await asCaller.auth.getUser()
-  if (userErr || !userData.user) return json({ error: 'Не выполнен вход' }, 401)
+  // кто вызывает: проверяем токен пользователя через Supabase Auth
+  const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: userData, error: userErr } = await admin.auth.getUser(jwt)
+  if (userErr || !userData.user) return json({ error: 'Сессия недействительна — войдите в CRM заново' }, 401)
 
-  const admin = createClient(url, service, { auth: { persistSession: false } })
   const { data: me } = await admin.from('profiles').select('role, is_active').eq('id', userData.user.id).maybeSingle()
   if (!me || me.role !== 'admin' || !me.is_active) return json({ error: 'Только администратор CRM может управлять пользователями' }, 403)
 
