@@ -616,6 +616,19 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     expect((await db.sql(`select count(*)::int n from manager_assignments where reason like 'Автоплан%'`))[0].n).toBeGreaterThan(80)
   })
 
+  it('тестовая учётка без «В автоплане» не получает точек; сегмент только A/B/C', async () => {
+    const t = await db.createUser('test', 'rep')
+    await expectPgError(db.as(r1, (q) => q('select set_rep_autoplan($1, false)', [t])), 'Недостаточно прав')
+    await db.as(head, (q) => q('select set_rep_autoplan($1, false)', [t]))
+    await db.as(head, (q) => q(`select auto_plan('2026-11-09', 15, 150)`))
+    const [{ n }] = await db.sql(`select count(*)::int n from visits where manager_id = $1`, [t])
+    expect(n).toBe(0)
+    const [{ m }] = await db.sql(`select count(*)::int m from locations where manager_id = $1`, [t])
+    expect(m).toBe(0)
+    await db.sql(`update locations set segment = 'A' where name = 'Точка 1'`)
+    await expectPgError(db.sql(`update locations set segment = 'D' where name = 'Точка 1'`), 'check')
+  })
+
   it('повторный запуск перестраивает без дублей и не трогает ручные визиты; посещённые не планируются', async () => {
     const before = (await db.sql(`select count(*)::int n from visits where status = 'planned'`))[0].n
     const [{ id: done }] = await db.sql(`select v.id from visits v join locations l on l.id = v.location_id where v.auto_planned and l.name = 'Точка 3'`)

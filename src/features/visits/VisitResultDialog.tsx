@@ -35,6 +35,7 @@ const schema = z.object({
   bin: z.union([z.literal(''), z.string().regex(/^\d{12}$/, 'БИН — 12 цифр')]),
   address: z.string().trim().max(300),
   posts_count: optInt,
+  segment: z.string(),
   lpr_full_name: z.string().trim().max(200),
   lpr_position: z.string().trim().max(100),
   lpr_phone: z.string().trim().max(50),
@@ -90,13 +91,13 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
     queryKey: ['visit-report', visit.location_id],
     queryFn: async () => {
       const [loc, contacts, services, equipment] = await Promise.all([
-        supabase.from('locations').select('name, confirmed_address, source_address, posts_count, company:companies(legal_name, bin)').eq('id', visit.location_id).maybeSingle(),
+        supabase.from('locations').select('name, confirmed_address, source_address, posts_count, segment, status_code, company:companies(legal_name, bin)').eq('id', visit.location_id).maybeSingle(),
         supabase.from('contacts').select('id, full_name, position, phone, whatsapp, decision_role, is_primary').eq('location_id', visit.location_id).is('archived_at', null).order('is_primary', { ascending: false }),
         supabase.from('location_services').select('service_id').eq('location_id', visit.location_id),
         supabase.from('location_equipment').select('category_id, brand_id, quantity').eq('location_id', visit.location_id).is('archived_at', null),
       ])
       return {
-        loc: unwrap(loc) as unknown as { name: string; confirmed_address: string | null; source_address: string | null; posts_count: number | null; company: { legal_name: string | null; bin: string | null } | null } | null,
+        loc: unwrap(loc) as unknown as { name: string; confirmed_address: string | null; source_address: string | null; posts_count: number | null; segment: string | null; status_code: string; company: { legal_name: string | null; bin: string | null } | null } | null,
         contacts: unwrap(contacts) as Pick<Contact, 'id' | 'full_name' | 'position' | 'phone' | 'whatsapp' | 'decision_role' | 'is_primary'>[],
         services: (unwrap(services) as { service_id: string }[]).map((s) => s.service_id),
         equipment: unwrap(equipment) as { category_id: string | null; brand_id: string | null; quantity: number }[],
@@ -111,7 +112,7 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
       interest: visit.interest ?? '', needs: visit.needs ?? '', agreements: visit.agreements ?? '', next_step: visit.next_step ?? '',
       next_contact_date: visit.next_contact_date ?? '', schedule_next_date: '', location_status: '', comment: visit.comment ?? '',
       expansion_plans: visit.expansion_plans ?? '',
-      name: '', legal_name: '', bin: '', address: '', posts_count: '', lpr_full_name: '', lpr_position: '', lpr_phone: '', lpr_whatsapp: '',
+      name: '', legal_name: '', bin: '', address: '', posts_count: '', segment: '', lpr_full_name: '', lpr_position: '', lpr_phone: '', lpr_whatsapp: '',
       service_ids: [], equipment: {},
       svc_on: false, svc_item: '', svc_category: '', svc_brand: '', svc_desc: '', svc_urgency: 'normal',
       parts_on: false, parts_item: '', parts_article: '', parts_brand: '', parts_qty: 1,
@@ -129,7 +130,7 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
     reset((v) => ({
       ...v,
       name: c.loc?.name ?? '', legal_name: c.loc?.company?.legal_name ?? '', bin: c.loc?.company?.bin ?? '',
-      address: c.loc?.confirmed_address ?? c.loc?.source_address ?? '', posts_count: c.loc?.posts_count ?? '',
+      address: c.loc?.confirmed_address ?? c.loc?.source_address ?? '', posts_count: c.loc?.posts_count ?? '', segment: c.loc?.segment ?? '', location_status: c.loc?.status_code ?? '',
       lpr_full_name: lpr?.full_name ?? '', lpr_position: lpr?.position ?? '', lpr_phone: lpr?.phone ?? '', lpr_whatsapp: lpr?.whatsapp ?? '',
       service_ids: c.services, equipment: eq,
     }), { keepDirtyValues: true })
@@ -161,6 +162,9 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
         requests,
       }
       const res = unwrap(await supabase.rpc('save_visit_report', { p_visit: visit.id, p_data: payload })) as { requests: { number: string }[] }
+      if (done && v.segment !== (card.data?.loc?.segment ?? '')) {
+        unwrap(await supabase.from('locations').update({ segment: v.segment || null }).eq('id', visit.location_id))
+      }
       let photoErrors: string[] = []
       if (files.length) photoErrors = (await uploadLocationPhotos(visit.location_id, files, visit.id)).errors
       return { numbers: res.requests.map((r) => r.number), photoErrors }
@@ -202,6 +206,7 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
                 <Field label="Фактический адрес" hint="Если не совпадает с 2GIS" className="sm:col-span-2">{(id) => <Input id={id} {...register('address')} />}</Field>
                 <Field label="БИН / ИИН" error={errors.bin?.message}>{(id) => <Input id={id} inputMode="numeric" {...register('bin')} />}</Field>
                 <Field label="Сколько постов" error={errors.posts_count?.message}>{(id) => <Input id={id} inputMode="numeric" {...register('posts_count')} />}</Field>
+                <Field label="Сегментация">{(id) => <Select id={id} {...register('segment')}><option value="">—</option><option value="A">A</option><option value="B">B</option><option value="C">C</option></Select>}</Field>
               </Section>
 
               <Section title="ЛПР — кто принимает решения">
@@ -251,7 +256,7 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
               <Section title="Будущее сервиса" hint="Планы расширения, новые посты, возможные заказы">
                 <Field label="Планы и перспективы" className="sm:col-span-2">{(id) => <Textarea id={id} rows={2} placeholder="Например: весной открывают второй бокс, присматривают стенд развал-схождения" {...register('expansion_plans')} />}</Field>
                 <Field label="Интерес к покупке">{(id) => <Select id={id} {...register('interest')}><option value="">Не оценён</option>{Object.entries(INTEREST_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>}</Field>
-                <Field label="Статус клиента">{(id) => <Select id={id} {...register('location_status')}><option value="">Оставить как есть</option>{d.clientStatuses.filter((s) => s.is_active).map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</Select>}</Field>
+                <Field label="Статус клиента">{(id) => <Select id={id} {...register('location_status')}>{d.clientStatuses.filter((s) => s.is_active).map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</Select>}</Field>
               </Section>
 
               <Section title="Заявки в отделы" hint="Отметьте, если клиенту что-то нужно — заявка уйдёт в отдел при сохранении">

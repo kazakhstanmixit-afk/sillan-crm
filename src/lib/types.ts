@@ -8,6 +8,7 @@ export interface Profile {
   role: Role
   is_active: boolean
   can_view_all: boolean
+  in_autoplan: boolean
   can_import: boolean
   created_at: string
 }
@@ -62,6 +63,7 @@ export interface Location {
   phones: string[]
   website: string | null
   posts_count: number | null
+  segment: 'A' | 'B' | 'C' | null
   lifts_count: number | null
   infrastructure_note: string | null
   capacity_note: string | null

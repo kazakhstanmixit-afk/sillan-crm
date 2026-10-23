@@ -85,6 +85,11 @@ function TeamTab() {
     onSuccess: () => { toast.success('Доступ изменён'); qc.invalidateQueries({ queryKey: ['dicts'] }) },
     onError: (e) => toast.error(e),
   })
+  const autoplan = useMutation({
+    mutationFn: async (v: { id: string; value: boolean }) => unwrap(await supabase.rpc('set_rep_autoplan', { p_user: v.id, p_value: v.value })),
+    onSuccess: (_r, v) => { toast.success(v.value ? 'Включён в автоплан' : 'Исключён из автоплана — нажмите «Перестроить план»'); qc.invalidateQueries({ queryKey: ['dicts'] }) },
+    onError: (e) => toast.error(e),
+  })
   const from = startOfMonthISO()
   const to = todayISO()
   const stats = useQuery({
@@ -130,9 +135,10 @@ function TeamTab() {
                     <td><div className="font-medium">{p.full_name || '—'}</div><div className="text-xs text-slate-500">{displayLogin(p.email)}</div></td>
                     <td>
                       {ROLE_LABEL[p.role]}
-                      {p.role === 'rep' && (
+                      {p.role === 'rep' && (<>
                         <div className="mt-1"><Checkbox label="Видит всю базу" checked={p.can_view_all} disabled={viewAll.isPending} onChange={(e) => viewAll.mutate({ id: p.id, value: e.target.checked })} /></div>
-                      )}
+                        <div className="mt-1"><Checkbox label="В автоплане" checked={p.in_autoplan} disabled={autoplan.isPending} onChange={(e) => autoplan.mutate({ id: p.id, value: e.target.checked })} /></div>
+                      </>)}
                     </td>
                     <td className="tabular-nums">{s?.assigned_clients ?? 0}</td>
                     <td className="tabular-nums">{s ? `${s.visits_planned} / ${s.visits_done}` : '0 / 0'}</td>

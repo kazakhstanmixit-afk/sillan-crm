@@ -39,6 +39,7 @@ const locationSchema = z.object({
   lng: optNum(-180, 180),
 })
 const infraSchema = z.object({
+  segment: z.string(),
   posts_count: optInt,
   lifts_count: optInt,
   infrastructure_note: z.string().max(2000),
@@ -127,6 +128,7 @@ export function OverviewTab({ location: l, company, canEdit }: { location: Locat
 
       <Card title="Инфраструктура" actions={editBtn('infra')}>
         <dl>
+          <InfoRow label="Сегментация">{l.segment}</InfoRow>
           <InfoRow label="Рабочих постов">{l.posts_count}</InfoRow>
           <InfoRow label="Подъёмников">{l.lifts_count}</InfoRow>
           <InfoRow label="О сервисе">{l.infrastructure_note && <span className="whitespace-pre-line">{l.infrastructure_note}</span>}</InfoRow>
@@ -247,16 +249,18 @@ function InfraEdit({ l, onClose }: { l: Location; onClose: () => void }) {
   const save = useSaveLocation(l.id)
   const { register, handleSubmit, formState: { errors } } = useForm<z.infer<typeof infraSchema>>({
     resolver: zodResolver(infraSchema),
-    defaultValues: { posts_count: l.posts_count ?? '', lifts_count: l.lifts_count ?? '', infrastructure_note: l.infrastructure_note ?? '', capacity_note: l.capacity_note ?? '' },
+    defaultValues: { segment: l.segment ?? '', posts_count: l.posts_count ?? '', lifts_count: l.lifts_count ?? '', infrastructure_note: l.infrastructure_note ?? '', capacity_note: l.capacity_note ?? '' },
   })
   const submit = handleSubmit((v) =>
     save.mutate({
+      segment: (v.segment || null) as Location['segment'],
       posts_count: v.posts_count === '' ? null : v.posts_count, lifts_count: v.lifts_count === '' ? null : v.lifts_count,
       infrastructure_note: emptyToNull(v.infrastructure_note), capacity_note: emptyToNull(v.capacity_note),
     }, { onSuccess: onClose }),
   )
   return (
     <EditModal title="Инфраструктура" onClose={onClose} onSubmit={submit} pending={save.isPending}>
+      <Field label="Сегментация">{(id) => <Select id={id} {...register('segment')}><option value="">—</option><option value="A">A</option><option value="B">B</option><option value="C">C</option></Select>}</Field>
       <Field label="Рабочих постов" error={errors.posts_count?.message}>{(id) => <Input id={id} inputMode="numeric" {...register('posts_count')} />}</Field>
       <Field label="Подъёмников" error={errors.lifts_count?.message}>{(id) => <Input id={id} inputMode="numeric" {...register('lifts_count')} />}</Field>
       <Field label="Дополнительно о сервисе" className="sm:col-span-2">{(id) => <Textarea id={id} {...register('infrastructure_note')} />}</Field>
