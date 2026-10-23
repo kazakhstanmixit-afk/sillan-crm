@@ -14,10 +14,11 @@ export interface Dictionaries {
   requestStatuses: RequestStatus[]
   dealStages: DealStage[]
   profiles: Profile[]
+  holidays: { id: string; day: string; name: string; is_active: boolean }[]
 }
 
 export async function loadDictionaries(): Promise<Dictionaries> {
-  const [directions, services, categories, brands, clientStatuses, requestStatuses, dealStages, profiles] = await Promise.all([
+  const [directions, services, categories, brands, clientStatuses, requestStatuses, dealStages, profiles, holidays] = await Promise.all([
     supabase.from('directions').select('*').order('sort').order('name'),
     supabase.from('services').select('*').order('sort').order('name'),
     supabase.from('equipment_categories').select('*').order('sort').order('name'),
@@ -26,6 +27,7 @@ export async function loadDictionaries(): Promise<Dictionaries> {
     supabase.from('request_statuses').select('*').order('sort'),
     supabase.from('deal_stages').select('*').order('sort'),
     supabase.from('profiles').select('id, full_name, email, phone, role, is_active, can_view_all, can_import, created_at').order('full_name'),
+    supabase.from('holidays').select('id, day, name, is_active').order('day'),
   ])
   return {
     directions: unwrap(directions),
@@ -36,11 +38,13 @@ export async function loadDictionaries(): Promise<Dictionaries> {
     requestStatuses: unwrap(requestStatuses),
     dealStages: unwrap(dealStages),
     profiles: unwrap(profiles) as Profile[],
+    // справочник праздников появляется с обновлением базы «автоплан»; до этого — пусто
+    holidays: holidays.error ? [] : (holidays.data ?? []),
   }
 }
 
 const EMPTY: Dictionaries = {
-  directions: [], services: [], categories: [], brands: [], clientStatuses: [], requestStatuses: [], dealStages: [], profiles: [],
+  directions: [], services: [], categories: [], brands: [], clientStatuses: [], requestStatuses: [], dealStages: [], profiles: [], holidays: [],
 }
 
 /** Справочники и список сотрудников (кэшируются; сбрасываются после изменений в «Настройках»). */

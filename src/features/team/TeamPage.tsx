@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Eye, Plus, Trash2 } from 'lucide-react'
+import { Eye, Plus, Route, Trash2 } from 'lucide-react'
 import { Button, Card, ConfirmDialog, Field, Input, PageHeader, QueryState, Select, Stat, Tabs, Modal, Checkbox, useToast } from '@/components/ui'
 import { usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
-import { fmtDateTime, startOfMonthISO, todayISO, plural } from '@/lib/format'
+import { fmtDate, fmtDateTime, startOfMonthISO, todayISO, plural } from '@/lib/format'
 import { ROLE_LABEL } from '@/lib/labels'
 import { displayLogin } from '@/lib/login'
 
@@ -27,6 +27,52 @@ export default function TeamPage() {
         {tab === 'history' && <HistoryTab />}
       </div>
     </div>
+  )
+}
+
+interface AutoPlanResult {
+  from: string; per_day: number; attached_near: number; no_coords: number
+  reps: Record<string, { name: string; days: number; points: number; last_day: string | null; avg_km: number | null }>
+}
+
+/** Автоплан: распределение точек между торговыми и план по дням — сразу, без предпросмотра */
+function AutoPlanCard() {
+  const qc = useQueryClient()
+  const toast = useToast()
+  const [res, setRes] = useState<AutoPlanResult | null>(null)
+  const run = useMutation({
+    mutationFn: async () => unwrap(await supabase.rpc('auto_plan', {})) as AutoPlanResult,
+    onSuccess: (r) => {
+      setRes(r)
+      toast.success('План посещений перестроен')
+      for (const k of [['plan'], ['clients'], ['team'], ['location'], ['dashboard']]) qc.invalidateQueries({ queryKey: k })
+    },
+    onError: (e) => toast.error(e),
+  })
+  return (
+    <Card title="Автоплан посещений" className="mb-4" actions={<Button variant="primary" icon={<Route className="size-4" />} loading={run.isPending} onClick={() => run.mutate()}>Перестроить план</Button>}>
+      <p className="text-sm text-slate-600">
+        Точки без ответственного делятся между торговыми представителями по территориям (без пересечений), каждый день — около 15 соседних точек
+        в порядке объезда. Точки в шаге (до 150 м) от запланированных ставятся в тот же день. Выходные и праздники пропускаются.
+        Ручные визиты и визиты из плана сотрудника не меняются. Каждый рабочий вечер план обновляется сам: непосещённые точки переносятся.
+      </p>
+      {run.isPending && <p className="mt-2 text-sm text-slate-500">Считаю… это может занять до минуты.</p>}
+      {res && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="data-table">
+            <thead><tr><th>Сотрудник</th><th>Дней</th><th>Точек</th><th>В среднем за день</th><th>До</th></tr></thead>
+            <tbody>
+              {Object.entries(res.reps).map(([id, r]) => (
+                <tr key={id}><td>{r.name}</td><td>{r.days}</td><td>{r.points}</td><td>{r.avg_km != null ? `≈ ${r.avg_km} км` : '—'}</td><td>{fmtDate(r.last_day)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-xs text-slate-500">
+            С {fmtDate(res.from)}. Добавлено рядом с уже запланированными: {res.attached_near}. Без координат (не планируются): {res.no_coords} — откройте их карточки и укажите адрес.
+          </p>
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -58,6 +104,7 @@ function TeamTab() {
   const people = d.profiles.filter((p) => p.is_active)
   return (
     <QueryState query={stats}>
+      <AutoPlanCard />
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Всего точек" value={stats.data?.dash.locations_total ?? 0} />
         <Stat label="Без ответственного" value={stats.data?.dash.locations_unassigned ?? 0} tone={stats.data?.dash.locations_unassigned ? 'warn' : undefined} />

@@ -557,3 +557,75 @@ describe.skipIf(!TEST_DB_URL)('Отчёт о визите одной формо�
     expect(l2).toEqual({ name: 'СТО «Мотор»', confirmed_address: 'ул. Сыганак, 2, въезд со двора', posts_count: 4 })
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
+  let db: TestDb
+  let head: string, r1: string, r2: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    head = await db.createUser('Руководитель', 'head')
+    r1 = await db.createUser('Михаил Ким', 'rep')
+    r2 = await db.createUser('Байжан Тулегенов', 'rep')
+    // два района по 45 точек (запад и восток), плюс две точки «в шаге» от уже запланированной
+    const vals: string[] = []
+    for (let i = 0; i < 90; i++) {
+      const east = i >= 45
+      const lat = 51.12 + ((i * 37) % 45) * 0.0012
+      const lng = (east ? 71.50 : 71.38) + ((i * 11) % 45) * 0.0008
+      vals.push(`('Точка ${i}', 'Астана', ${lat}, ${lng})`)
+    }
+    await db.sql(`insert into locations (name, city, lat, lng) values ${vals.join(',')}`)
+    await db.sql(`insert into locations (name, city, lat, lng) values ('Ручная', 'Астана', 51.2, 71.6), ('Сосед 1', 'Астана', 51.2005, 71.6), ('Далеко без координат', 'Астана', null, null)`)
+    await db.as(head, async (q) => {
+      const [{ id }] = await q(`select id from locations where name = 'Ручная'`)
+      await q('select assign_locations($1, $2)', [[id], r1])
+      const [{ ensure_visit_plan: plan }] = await q('select ensure_visit_plan($1, $2)', [r1, '2026-11-11'])
+      await q('select add_plan_visits($1, $2)', [plan, [id]])
+    })
+  })
+  afterAll(async () => db?.close())
+
+  it('распределяет без пересечений, по ~15 в день, пропускает выходные и праздники; соседей ставит в тот же день', async () => {
+    await expectPgError(db.as(r1, (q) => q(`select auto_plan('2026-11-09')`)), 'Недостаточно прав')
+    const [{ r }] = await db.as(head, (q) => q(`select auto_plan('2026-11-09', 15, 150) as r`))
+    expect(r.from).toBe('2026-11-09')
+    expect(r.attached_near).toBe(1)
+    expect(r.no_coords).toBe(1)
+
+    const planned = await db.sql(`select v.location_id, v.manager_id, v.planned_date::text d, l.name from visits v join locations l on l.id = v.location_id where v.status = 'planned'`)
+    expect(new Set(planned.map((p) => p.location_id)).size).toBe(planned.length) // каждая точка — один раз
+    expect(planned.length).toBe(92)
+    const sosed = planned.find((p) => p.name === 'Сосед 1')!
+    expect(sosed).toMatchObject({ manager_id: r1, d: '2026-11-11' })
+    for (const p of planned) {
+      const wd = new Date(p.d + 'T00:00:00Z').getUTCDay()
+      expect(wd).not.toBe(0); expect(wd).not.toBe(6)
+      expect(p.d).not.toBe('2026-12-16')
+    }
+    const perDay = new Map<string, number>()
+    for (const p of planned) perDay.set(p.manager_id + p.d, (perDay.get(p.manager_id + p.d) ?? 0) + 1)
+    expect(Math.max(...perDay.values())).toBeLessThanOrEqual(20)
+    // территории: запад — одному, восток — другому
+    const west = planned.filter((p) => /^Точка (\d|[1-3]\d|4[0-4])$/.test(p.name))
+    const owners = new Set(west.map((p) => p.manager_id))
+    expect(owners.size).toBe(1)
+    const counts = [r1, r2].map((id) => planned.filter((p) => p.manager_id === id).length)
+    expect(Math.abs(counts[0] - counts[1])).toBeLessThanOrEqual(4)
+    // все точки закреплены за представителем, история назначений записана
+    expect((await db.sql(`select count(*)::int n from locations where manager_id is null and lat is not null`))[0].n).toBe(0)
+    expect((await db.sql(`select count(*)::int n from manager_assignments where reason like 'Автоплан%'`))[0].n).toBeGreaterThan(80)
+  })
+
+  it('повторный запуск перестраивает без дублей и не трогает ручные визиты; посещённые не планируются', async () => {
+    const before = (await db.sql(`select count(*)::int n from visits where status = 'planned'`))[0].n
+    const [{ id: done }] = await db.sql(`select v.id from visits v join locations l on l.id = v.location_id where v.auto_planned and l.name = 'Точка 3'`)
+    await db.as(r1, async (q) => q(`select complete_visit($1, '{"status":"done","result":"Был"}'::jsonb)`, [done])).catch(async () =>
+      db.as(r2, (q) => q(`select complete_visit($1, '{"status":"done","result":"Был"}'::jsonb)`, [done])))
+    await db.as(head, (q) => q(`select auto_plan('2026-11-09')`))
+    const after = (await db.sql(`select count(*)::int n from visits where status = 'planned'`))[0].n
+    expect(after).toBe(before - 1)
+    const manual = await db.sql(`select v.planned_date::text d, v.auto_planned from visits v join locations l on l.id = v.location_id where l.name = 'Ручная'`)
+    expect(manual).toEqual([{ d: '2026-11-11', auto_planned: false }])
+    expect((await db.sql(`select count(*)::int n from (select location_id from visits where status='planned' group by 1 having count(*) > 1) s`))[0].n).toBe(0)
+  })
+})

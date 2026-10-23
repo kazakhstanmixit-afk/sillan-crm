@@ -192,6 +192,7 @@ export interface Visit {
   comment: string | null
   status_reason: string | null
   expansion_plans?: string | null
+  auto_planned?: boolean
   rescheduled_to: string | null
   created_at: string
 }

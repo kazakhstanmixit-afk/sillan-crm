@@ -6,8 +6,9 @@ import { usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
+import { fmtDate } from '@/lib/format'
 
-type FieldType = 'text' | 'number' | 'bool' | 'keywords' | 'direction' | 'kind' | 'color' | 'code'
+type FieldType = 'text' | 'number' | 'bool' | 'keywords' | 'direction' | 'kind' | 'color' | 'code' | 'date'
 interface Col { key: string; label: string; type: FieldType; required?: boolean; hint?: string }
 interface DictConf { key: string; title: string; table: string; idKey: 'id' | 'code'; cols: Col[]; note?: string }
 
@@ -26,6 +27,8 @@ const DICTS: DictConf[] = [
     cols: [{ key: 'code', label: 'Код', type: 'code', required: true }, { key: 'name', label: 'Название', type: 'text', required: true }, { key: 'color', label: 'Цвет', type: 'color' }, { key: 'sort', label: 'Порядок', type: 'number' }, { key: 'is_active', label: 'Активен', type: 'bool' }] },
   { key: 'requestStatuses', title: 'Статусы заявок', table: 'request_statuses', idKey: 'code', note: '«Итоговый» статус закрывает заявку (она уходит из открытых).',
     cols: [{ key: 'code', label: 'Код', type: 'code', required: true }, { key: 'name', label: 'Название', type: 'text', required: true }, { key: 'is_final', label: 'Итоговый', type: 'bool' }, { key: 'color', label: 'Цвет', type: 'color' }, { key: 'sort', label: 'Порядок', type: 'number' }, { key: 'is_active', label: 'Активен', type: 'bool' }] },
+  { key: 'holidays', title: 'Нерабочие дни', table: 'holidays', idKey: 'id', note: 'Праздники и перенесённые выходные — автоплан не ставит на них визиты. Суббота и воскресенье пропускаются всегда.',
+    cols: [{ key: 'day', label: 'Дата', type: 'date', required: true }, { key: 'name', label: 'Название', type: 'text' }, { key: 'is_active', label: 'Учитывать', type: 'bool' }] },
   { key: 'dealStages', title: 'Стадии сделок', table: 'deal_stages', idKey: 'code',
     cols: [{ key: 'code', label: 'Код', type: 'code', required: true }, { key: 'name', label: 'Название', type: 'text', required: true }, { key: 'kind', label: 'Тип', type: 'kind' }, { key: 'sort', label: 'Порядок', type: 'number' }, { key: 'is_active', label: 'Активна', type: 'bool' }] },
 ]
@@ -45,6 +48,7 @@ export function DictionariesTab() {
   const display = (c: Col, r: Row) => {
     const v = r[c.key]
     if (c.type === 'bool') return v ? 'Да' : 'Нет'
+    if (c.type === 'date') return fmtDate(String(v))
     if (c.type === 'keywords') return (v as string[] | null)?.join(', ') || '—'
     if (c.type === 'direction') return v ? d.directionName(String(v)) : '—'
     if (c.type === 'kind') return KIND_LABEL[String(v)] ?? String(v)
@@ -104,7 +108,7 @@ function DictForm({ conf, row, onClose }: { conf: DictConf; row: Row | null; onC
         if (c.type === 'keywords') payload[c.key] = String(val).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
         else if (c.type === 'number') payload[c.key] = Number(val) || 0
         else if (c.type === 'direction') payload[c.key] = val || null
-        else if (c.type === 'text' || c.type === 'code') payload[c.key] = String(val).trim()
+        else if (c.type === 'text' || c.type === 'code' || c.type === 'date') payload[c.key] = String(val).trim()
         else payload[c.key] = val
         if (c.required && !payload[c.key]) throw new Error(`Заполните поле «${c.label}»`)
         if (c.type === 'code' && !/^[a-z][a-z0-9_]{1,30}$/.test(String(payload[c.key]))) throw new Error('Код: латиница в нижнем регистре, цифры и «_», например in_work')
@@ -132,7 +136,7 @@ function DictForm({ conf, row, onClose }: { conf: DictConf; row: Row | null; onC
               ) : c.type === 'color' ? (
                 <Select id={id} value={String(v[c.key])} onChange={(e) => setV({ ...v, [c.key]: e.target.value })}>{COLORS.map((k) => <option key={k} value={k}>{k}</option>)}</Select>
               ) : (
-                <Input id={id} type={c.type === 'number' ? 'number' : 'text'} value={String(v[c.key] ?? '')} disabled={c.type === 'code' && !!row} onChange={(e) => setV({ ...v, [c.key]: e.target.value })} />
+                <Input id={id} type={c.type === 'number' ? 'number' : c.type === 'date' ? 'date' : 'text'} value={String(v[c.key] ?? '')} disabled={c.type === 'code' && !!row} onChange={(e) => setV({ ...v, [c.key]: e.target.value })} />
               )}
             </Field>
           )

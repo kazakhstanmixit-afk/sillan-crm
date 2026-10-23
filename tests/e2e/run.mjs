@@ -405,6 +405,17 @@ await step('мобильная вёрстка: список клиентов б�
   await shot('12-clients-mobile')
 })
 
+await step('автоплан: кнопка руководителя распределяет точки и строит план по дням', async () => {
+  await page.setViewportSize({ width: 1360, height: 900 })
+  await page.goto(base + '/team')
+  await page.getByRole('button', { name: 'Перестроить план' }).click()
+  await page.getByText('План посещений перестроен').first().waitFor({ timeout: 60000 })
+  await page.getByRole('cell', { name: 'Ерлан Торговый' }).first().waitFor()
+  const { rows: [r] } = await db.query(`select count(*)::int n from visits where auto_planned and status = 'planned'`)
+  if (r.n < 1) throw new Error('автоплан не создал визиты')
+  await shot('16-autoplan')
+})
+
 await browser.close()
 for (const p of procs) p.kill()
 await db.end()
