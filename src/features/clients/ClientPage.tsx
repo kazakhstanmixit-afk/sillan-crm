@@ -87,7 +87,7 @@ export default function ClientPage() {
           <div className="flex flex-wrap gap-2">
             {phone && <a href={telHref(phone)}><Button size="sm" icon={<Phone className="size-3.5" />}>Позвонить</Button></a>}
             {whatsapp && <a href={waHref(whatsapp)} target="_blank" rel="noreferrer"><Button size="sm" icon={<MessageCircle className="size-3.5" />}>WhatsApp</Button></a>}
-            {map && <a href={map} target="_blank" rel="noreferrer"><Button size="sm" icon={<MapPin className="size-3.5" />}>Открыть адрес</Button></a>}
+            {map && <a href={map} target="_blank" rel="noreferrer"><Button size="sm" icon={<MapPin className="size-3.5" />}>Карта</Button></a>}
             {!l.archived_at && (
               <>
                 <Button size="sm" icon={<CalendarPlus className="size-3.5" />} onClick={() => setPlanOpen(true)}>В план</Button>

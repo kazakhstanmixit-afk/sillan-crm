@@ -111,7 +111,7 @@ export function OverviewTab({ location: l, company, canEdit }: { location: Locat
         ) : <p className="text-sm text-slate-500">Юрлицо не указано.</p>}
       </Card>
 
-      <Card title="Фактическое расположение" actions={<>{map && <a href={map} target="_blank" rel="noreferrer" className="text-sm text-brand-700 hover:underline">Открыть адрес</a>}{editBtn('location')}</>}>
+      <Card title="Фактическое расположение" actions={<>{map && <a href={map} target="_blank" rel="noreferrer" className="text-sm text-brand-700 hover:underline">Карта</a>}{editBtn('location')}</>}>
         <dl>
           <InfoRow label="Город">{l.city}</InfoRow>
           <InfoRow label="Район">{l.district}</InfoRow>

@@ -108,7 +108,7 @@ export default function PlanPage() {
     <div className="mx-auto max-w-4xl">
       <PageHeader
         title="План посещений"
-        subtitle="Список точек на день в нужном порядке. Встроенной карты и расчёта маршрута нет — адрес открывается во внешнем приложении."
+        subtitle="Список точек на день в нужном порядке. Кнопка «Карта» открывает точку в Google Картах."
         actions={canManage && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAddOpen(true)}>Добавить точки</Button>}
       />
       <Card className="mb-3" bodyClassName="flex flex-wrap items-center gap-2 p-3">
@@ -179,7 +179,7 @@ export default function PlanPage() {
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
                           {contact?.full_name && <span className="text-slate-600">{contact.full_name}</span>}
                           {phone && <a href={telHref(phone)} className="inline-flex items-center gap-1 text-brand-700"><Phone className="size-3.5" />{formatPhone(phone)}</a>}
-                          {map && <a href={map} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-700"><MapPin className="size-3.5" />Открыть адрес</a>}
+                          {map && <a href={map} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-700"><MapPin className="size-3.5" />Карта</a>}
                         </div>
                         {v.purpose && <div className="text-sm"><span className="text-slate-500">Цель:</span> {v.purpose}</div>}
                         {v.prep_notes && <div className="whitespace-pre-line text-sm text-slate-600">{v.prep_notes}</div>}

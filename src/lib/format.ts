@@ -49,14 +49,17 @@ export function isOverdue(date: string | null | undefined): boolean {
   return Boolean(date && date < todayISO())
 }
 
-/** Внешняя ссылка на адрес в картографическом сервисе (без встроенной карты) */
+/**
+ * Ссылка «Карта» — Google Карты: по координатам (точная точка), иначе поиск по городу и адресу.
+ * На телефоне открывается приложение Google Maps.
+ */
 export function mapHref(opts: { lat?: number | null; lng?: number | null; address?: string | null; city?: string | null }): string | null {
   if (opts.lat != null && opts.lng != null) {
-    return `https://2gis.kz/geo/${opts.lng},${opts.lat}`
+    return `https://www.google.com/maps/search/?api=1&query=${opts.lat},${opts.lng}`
   }
   const q = [opts.city, opts.address].filter(Boolean).join(', ')
   if (!q) return null
-  return `https://2gis.kz/search/${encodeURIComponent(q)}`
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`
 }
 
 export function plural(n: number, one: string, few: string, many: string): string {
