@@ -604,7 +604,7 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     }
     const perDay = new Map<string, number>()
     for (const p of planned) perDay.set(p.manager_id + p.d, (perDay.get(p.manager_id + p.d) ?? 0) + 1)
-    expect(Math.max(...perDay.values())).toBeLessThanOrEqual(20)
+    expect(Math.max(...perDay.values())).toBeLessThanOrEqual(15)
     // территории: запад — одному, восток — другому
     const west = planned.filter((p) => /^Точка (\d|[1-3]\d|4[0-4])$/.test(p.name))
     const owners = new Set(west.map((p) => p.manager_id))
@@ -627,6 +627,25 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     expect(m).toBe(0)
     await db.sql(`update locations set segment = 'A' where name = 'Точка 1'`)
     await expectPgError(db.sql(`update locations set segment = 'D' where name = 'Точка 1'`), 'check')
+  })
+
+  it('больше 15 точек в день поставить нельзя — ни вручную, ни автопланом', async () => {
+    const day = (await db.sql(`select planned_date::text d, count(*)::int n from visits where manager_id = $1 and status = 'planned' group by 1 order by 2 desc limit 1`, [r1]))[0]
+    expect(day.n).toBeLessThanOrEqual(15)
+    const free = await db.sql(`insert into locations (name, city, lat, lng) select 'Лишняя ' || g, 'Астана', 51.3, 71.7 from generate_series(1, 16) g returning id`)
+    const plan = await db.as(head, async (q) => {
+      await q('select assign_locations($1, $2)', [free.map((f) => f.id), r1])
+      return (await q('select ensure_visit_plan($1, $2) as p', [r1, '2026-12-28']))[0].p
+    })
+    await expectPgError(db.as(head, (q) => q('select add_plan_visits($1, $2)', [plan, free.map((f) => f.id)])), 'максимум')
+    await db.as(head, (q) => q('select add_plan_visits($1, $2)', [plan, free.slice(0, 15).map((f) => f.id)]))
+    const [{ n }] = await db.sql(`select count(*)::int n from visits where manager_id = $1 and planned_date = '2026-12-28'`, [r1])
+    expect(n).toBe(15)
+    // выполненный визит в полном дне отмечается без ошибки
+    const [{ id }] = await db.sql(`select id from visits where manager_id = $1 and planned_date = '2026-12-28' limit 1`, [r1])
+    await db.as(r1, (q) => q(`select complete_visit($1, '{"status":"done","result":"Был"}'::jsonb)`, [id]))
+    await db.sql(`delete from visits where planned_date = '2026-12-28'`)
+    await db.sql(`delete from locations where name like 'Лишняя %'`)
   })
 
   it('повторный запуск перестраивает без дублей и не трогает ручные визиты; посещённые не планируются', async () => {
