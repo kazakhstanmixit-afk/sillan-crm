@@ -114,7 +114,7 @@ export function BulkAssignDialog({ open, onClose, getRows, onDone }: {
   )
 }
 
-type EditKey = 'status_code' | 'city' | 'district' | 'client_type'
+type EditKey = 'status_code' | 'city' | 'district'
 
 /** Массовое изменение допустимых полей */
 export function BulkEditDialog({ open, onClose, getRows }: { open: boolean; onClose: () => void; getRows: () => Promise<LocationListRow[]> }) {
@@ -122,13 +122,13 @@ export function BulkEditDialog({ open, onClose, getRows }: { open: boolean; onCl
   const toast = useToast()
   const qc = useQueryClient()
   const { rows, error } = useRows(open, getRows)
-  const [on, setOn] = useState<Record<EditKey, boolean>>({ status_code: false, city: false, district: false, client_type: false })
-  const [val, setVal] = useState<Record<EditKey, string>>({ status_code: '', city: '', district: '', client_type: '' })
+  const [on, setOn] = useState<Record<EditKey, boolean>>({ status_code: false, city: false, district: false })
+  const [val, setVal] = useState<Record<EditKey, string>>({ status_code: '', city: '', district: '' })
   const [confirm, setConfirm] = useState(false)
   useEffect(() => {
     if (open) {
-      setOn({ status_code: false, city: false, district: false, client_type: false })
-      setVal({ status_code: '', city: '', district: '', client_type: '' })
+      setOn({ status_code: false, city: false, district: false })
+      setVal({ status_code: '', city: '', district: '' })
       setConfirm(false)
     }
   }, [open])
@@ -149,7 +149,7 @@ export function BulkEditDialog({ open, onClose, getRows }: { open: boolean; onCl
     onError: (e) => toast.error(e),
   })
 
-  const labels: Record<EditKey, string> = { status_code: 'Статус', city: 'Город', district: 'Район', client_type: 'Тип клиента' }
+  const labels: Record<EditKey, string> = { status_code: 'Статус', city: 'Город', district: 'Район' }
 
   return (
     <Modal

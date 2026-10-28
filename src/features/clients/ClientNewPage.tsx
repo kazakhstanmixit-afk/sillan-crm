@@ -110,9 +110,6 @@ export default function ClientNewPage() {
           <Field label="Статус">
             {(id) => <Select id={id} {...register('status_code')}>{d.clientStatuses.filter((s) => s.is_active).map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</Select>}
           </Field>
-          <Field label="Тип клиента" hint="Например: сетевой сервис, частный мастер, дилер">
-            {(id) => <Input id={id} {...register('client_type')} />}
-          </Field>
           {perms.assign && (
             <Field label="Ответственный менеджер">
               {(id) => (

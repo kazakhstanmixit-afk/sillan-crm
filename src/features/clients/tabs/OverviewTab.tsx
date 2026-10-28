@@ -87,7 +87,6 @@ export function OverviewTab({ location: l, company, canEdit }: { location: Locat
         <dl>
           <InfoRow label="Название">{l.name}</InfoRow>
           <InfoRow label="Статус">{d.clientStatus(l.status_code)?.name}</InfoRow>
-          <InfoRow label="Тип клиента">{l.client_type}</InfoRow>
           <InfoRow label="Телефоны точки">
             {l.phones.length ? l.phones.map((p) => <a key={p} href={telHref(p)} className="mr-3 whitespace-nowrap text-brand-700 hover:underline">{formatPhone(p)}</a>) : null}
           </InfoRow>
@@ -107,7 +106,6 @@ export function OverviewTab({ location: l, company, canEdit }: { location: Locat
             <InfoRow label="Название">{company.name}</InfoRow>
             <InfoRow label="Юридическое лицо">{company.legal_name}</InfoRow>
             <InfoRow label="БИН">{company.bin}</InfoRow>
-            <InfoRow label="Тип клиента">{company.client_type}</InfoRow>
           </dl>
         ) : <p className="text-sm text-slate-500">Юрлицо не указано.</p>}
       </Card>
@@ -203,13 +201,12 @@ function GeneralEdit({ l, onClose }: { l: Location; onClose: () => void }) {
     defaultValues: { name: l.name, status_code: l.status_code, client_type: l.client_type ?? '', website: l.website ?? '', phones: l.phones.join(', ') },
   })
   const submit = handleSubmit((v) =>
-    save.mutate({ name: v.name.trim(), status_code: v.status_code, client_type: emptyToNull(v.client_type), website: emptyToNull(v.website), phones: splitPhones(v.phones) }, { onSuccess: onClose }),
+    save.mutate({ name: v.name.trim(), status_code: v.status_code, website: emptyToNull(v.website), phones: splitPhones(v.phones) }, { onSuccess: onClose }),
   )
   return (
     <EditModal title="Общая информация" onClose={onClose} onSubmit={submit} pending={save.isPending}>
       <Field label="Название" required error={errors.name?.message} className="sm:col-span-2">{(id) => <Input id={id} aria-invalid={!!errors.name} {...register('name')} />}</Field>
       <Field label="Статус">{(id) => <Select id={id} {...register('status_code')}>{d.clientStatuses.filter((s) => s.is_active || s.code === l.status_code).map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}</Select>}</Field>
-      <Field label="Тип клиента">{(id) => <Input id={id} {...register('client_type')} />}</Field>
       <Field label="Телефоны точки" hint="Через запятую" className="sm:col-span-2">{(id) => <Input id={id} {...register('phones')} />}</Field>
       <Field label="Сайт" className="sm:col-span-2">{(id) => <Input id={id} {...register('website')} />}</Field>
     </EditModal>
@@ -282,7 +279,7 @@ function CompanyEdit({ l, company, onClose }: { l: Location; company: Company | 
     mutationFn: async (v: z.infer<typeof companySchema> | null) => {
       let companyId: string | null = null
       if (editing && v) {
-        unwrap(await supabase.from('companies').update({ name: v.name.trim(), legal_name: emptyToNull(v.legal_name), bin: emptyToNull(v.bin), client_type: emptyToNull(v.client_type) }).eq('id', company!.id).select('id'))
+        unwrap(await supabase.from('companies').update({ name: v.name.trim(), legal_name: emptyToNull(v.legal_name), bin: emptyToNull(v.bin) }).eq('id', company!.id).select('id'))
         companyId = company!.id
       } else if (choice.kind === 'existing') companyId = choice.id
       else if (choice.kind === 'new') {
@@ -312,7 +309,6 @@ function CompanyEdit({ l, company, onClose }: { l: Location; company: Company | 
           <Field label="Название" required error={errors.name?.message}>{(id) => <Input id={id} {...register('name')} />}</Field>
           <Field label="Юридическое лицо">{(id) => <Input id={id} {...register('legal_name')} />}</Field>
           <Field label="БИН" error={errors.bin?.message}>{(id) => <Input id={id} inputMode="numeric" {...register('bin')} />}</Field>
-          <Field label="Тип клиента">{(id) => <Input id={id} {...register('client_type')} />}</Field>
         </>
       )}
     </EditModal>
