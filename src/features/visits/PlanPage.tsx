@@ -155,10 +155,11 @@ export default function PlanPage() {
                 const contact = q.data?.contacts[v.location_id]
                 const phone = contact?.phone ?? loc?.phones?.[0]
                 const isPlanned = v.status === 'planned'
+                const visitedBefore = isPlanned && loc?.last_visit_at ? loc.last_visit_at : null
                 return (
                   <li key={v.id} className="list-none">
                   {legKm(i) !== null && <div className="py-1 pl-4 text-xs text-slate-400">↓ {fmtKm(legKm(i)!)}</div>}
-                  <div className={`rounded-lg border bg-white p-3 ${v.status === 'done' ? 'border-emerald-200' : 'border-slate-200'}`}>
+                  <div className={`rounded-lg border bg-white p-3 ${v.status === 'done' ? 'border-emerald-200' : visitedBefore ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
                     <div className="flex items-start gap-3">
                       <div className="flex flex-col items-center">
                         <span className="flex size-7 items-center justify-center rounded-full bg-brand-50 text-sm font-semibold text-brand-800">{i + 1}</span>
@@ -173,6 +174,7 @@ export default function PlanPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <Link to={`/clients/${v.location_id}`} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">{loc?.name ?? 'Клиент недоступен'}</Link>
                           <Badge color={VISIT_STATUS_COLOR[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge>
+                          {visitedBefore && <Badge color="amber">Уже посещена {fmtDate(visitedBefore)}</Badge>}
                           {v.interest && <Badge color="violet">Интерес: {INTEREST_LABEL[v.interest]}</Badge>}
                         </div>
                         {address && <div className="text-sm text-slate-600">{[loc?.city, address].filter(Boolean).join(', ')}</div>}
