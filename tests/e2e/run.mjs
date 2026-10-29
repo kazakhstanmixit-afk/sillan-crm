@@ -289,6 +289,26 @@ await step('PDF выбранных заявок', async () => {
   if (await page.getByRole('link', { name: /сделки/i }).count()) throw new Error('в меню остались сделки')
 })
 
+await step('новая точка по пути: торговый сам добавляет, она в плане и в клиентах, сразу отчёт', async () => {
+  await page.context().grantPermissions(['geolocation'], { origin: base })
+  await page.context().setGeolocation({ latitude: 51.1605, longitude: 71.4704 })
+  await page.goto(base + '/plan')
+  await page.getByRole('button', { name: 'Добавить точки' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Точки нет в базе? Добавить новую точку' }).click()
+  const dlg = page.getByRole('dialog')
+  await dlg.getByText(/Место определено/).waitFor()
+  await dlg.getByLabel('Название СТО').fill('СТО Найдено по пути')
+  await dlg.getByLabel('Телефон').fill('+7 705 555 44 33')
+  await dlg.getByRole('button', { name: 'Сохранить и заполнить отчёт' }).click()
+  await toast('Новая точка сохранена')
+  await page.getByRole('dialog').getByText(/Отчёт о визите|Результат визита/).first().waitFor()
+  await shot('new-point-report')
+  await page.keyboard.press('Escape')
+  await page.locator('ol > li', { hasText: 'СТО Найдено по пути' }).waitFor()
+  await page.goto(base + '/clients')
+  await page.getByText('СТО Найдено по пути').waitFor()
+})
+
 await step('дашборд торгового представителя считает реальные данные', async () => {
   await page.goto(base + '/')
   await page.getByText('Показатели по вашим клиентам').waitFor()
@@ -354,7 +374,7 @@ await step('Apify: проверка, направления Sillan, импорт
   await page.getByRole('button', { name: /Импортировать: создать 3/ }).click()
   await page.getByText('Импорт завершён').first().waitFor({ timeout: 20000 })
   const { rows } = await db.query(`select external_id, name, source_category, district, website, phones, lat
-                                   from locations where city = 'Астана' order by name`)
+                                   from locations where city = 'Астана' and source <> 'manual' order by name`)
   if (rows.length !== 3) throw new Error('ожидалось 3 точки в Астане, есть ' + rows.length)
   const blesk = rows.find((r) => r.external_id === '80001')
   if (blesk.source_category !== 'Автомойки' || blesk.district !== null || blesk.website !== null) throw new Error('пустые значения подменены: ' + JSON.stringify(blesk))

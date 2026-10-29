@@ -15,8 +15,8 @@ type Row = Pick<LocationListRow, 'id' | 'name' | 'city' | 'district' | 'address'
 type Sort = 'near' | 'stale' | 'name'
 
 /** Выбор точек из базы для плана на день: поиск, район, направление, «рядом с точками плана» */
-export function AddPointsDialog({ open, onClose, managerId, date, existing, onlyOwn, anchors = [] }: {
-  open: boolean; onClose: () => void; managerId: string; date: string; existing: string[]; onlyOwn: boolean; anchors?: GeoPoint[]
+export function AddPointsDialog({ open, onClose, managerId, date, existing, onlyOwn, anchors = [], onNewPoint }: {
+  open: boolean; onClose: () => void; managerId: string; date: string; existing: string[]; onlyOwn: boolean; anchors?: GeoPoint[]; onNewPoint?: () => void
 }) {
   const d = useDicts()
   const [q, setQ] = useState('')
@@ -85,6 +85,7 @@ export function AddPointsDialog({ open, onClose, managerId, date, existing, only
       </>}>
       <div className="mb-3 grid gap-2 sm:grid-cols-2">
         <Input className="sm:col-span-2" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск по названию, адресу, телефону" aria-label="Поиск клиентов" />
+        {onNewPoint && <button type="button" className="text-left text-sm text-brand-700 hover:underline sm:col-span-2" onClick={onNewPoint}>Точки нет в базе? Добавить новую точку</button>}
         <Select value={district} onChange={(e) => setDistrict(e.target.value)} aria-label="Район">
           <option value="">Все районы</option>
           {districts.map((x) => <option key={x.city + x.district} value={x.district}>{x.district}{districts.some((y) => y.city !== x.city) ? ` (${x.city})` : ''}</option>)}

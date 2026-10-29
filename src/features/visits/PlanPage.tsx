@@ -13,6 +13,7 @@ import { INTEREST_LABEL, VISIT_STATUS_COLOR, VISIT_STATUS_LABEL } from '@/lib/la
 import { fetchPlan, type PlanVisit } from './api'
 import { distanceKm, fmtKm, hasCoords, orderByDistance } from '@/lib/geo'
 import { AddPointsDialog } from './AddPointsDialog'
+import { NewPointDialog } from './NewPointDialog'
 import { VisitResultDialog } from './VisitResultDialog'
 import { VisitEditDialog, VisitStatusDialog, type StatusAction } from './VisitStatusDialog'
 
@@ -95,6 +96,7 @@ export default function PlanPage() {
   })
 
   const [addOpen, setAddOpen] = useState(false)
+  const [newPointOpen, setNewPointOpen] = useState(false)
   const [resultFor, setResultFor] = useState<PlanVisit | null>(null)
   const [statusFor, setStatusFor] = useState<{ v: PlanVisit; action: StatusAction } | null>(null)
   const [editFor, setEditFor] = useState<PlanVisit | null>(null)
@@ -233,7 +235,8 @@ export default function PlanPage() {
         )}
       </QueryState>
 
-      <AddPointsDialog open={addOpen} onClose={() => setAddOpen(false)} managerId={manager} date={date} existing={visits.filter((v) => ['planned', 'done', 'failed'].includes(v.status)).map((v) => v.location_id)} onlyOwn={!perms.view_all} anchors={withCoords.map((v) => ({ lat: v.location!.lat!, lng: v.location!.lng! }))} />
+      <AddPointsDialog open={addOpen} onClose={() => setAddOpen(false)} managerId={manager} date={date} existing={visits.filter((v) => ['planned', 'done', 'failed'].includes(v.status)).map((v) => v.location_id)} onlyOwn={!perms.view_all} anchors={withCoords.map((v) => ({ lat: v.location!.lat!, lng: v.location!.lng! }))} onNewPoint={() => { setAddOpen(false); setNewPointOpen(true) }} />
+      <NewPointDialog open={newPointOpen} onClose={() => setNewPointOpen(false)} managerId={manager} date={date} onCreated={(v) => { setNewPointOpen(false); setResultFor(v) }} />
       {resultFor && <VisitResultDialog visit={resultFor} locationName={resultFor.location?.name ?? ''} onClose={() => setResultFor(null)} />}
       {statusFor && <VisitStatusDialog visit={statusFor.v} action={statusFor.action} onClose={() => setStatusFor(null)} />}
       {editFor && <VisitEditDialog visit={editFor} onClose={() => setEditFor(null)} />}

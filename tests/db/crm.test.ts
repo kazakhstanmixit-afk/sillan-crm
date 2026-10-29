@@ -661,3 +661,40 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     expect((await db.sql(`select count(*)::int n from (select location_id from visits where status='planned' group by 1 having count(*) > 1) s`))[0].n).toBe(0)
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Новая точка по пути', () => {
+  let db: TestDb
+  let r1: string, r2: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    r1 = await db.createUser('Михаил Ким', 'rep')
+    r2 = await db.createUser('Байжан Тулегенов', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  it('сохраняет точку в клиенты за торговым, ставит в план сверх 15, не плодит дубли, чужой план — нельзя', async () => {
+    const locs = await db.sql(`insert into locations (name, city, lat, lng, manager_id) select 'P' || g, 'Астана', 51.1, 71.4 + g * 0.001, $1 from generate_series(1, 15) g returning id`, [r1])
+    await db.as(r1, async (q) => {
+      const [{ p }] = await q('select ensure_visit_plan($1, $2) as p', [r1, '2026-11-10'])
+      await q('select add_plan_visits($1, $2)', [p, locs.map((l) => l.id)])
+    })
+    const [{ r }] = await db.as(r1, (q) => q(`select add_found_point($1, '2026-11-10', $2::jsonb) as r`,
+      [r1, JSON.stringify({ name: 'Новый шиномонтаж', phone: '+7 701 111 22 33', contact_name: 'Ерлан', lat: 51.2, lng: 71.5 })]))
+    expect(r.existed).toBe(false)
+    const [loc] = await db.sql(`select manager_id, lat, status_code, source from locations where id = $1`, [r.location_id])
+    expect(loc).toMatchObject({ manager_id: r1, lat: 51.2, status_code: 'new', source: 'manual' })
+    expect((await db.sql(`select count(*)::int n from visits where manager_id = $1 and planned_date = '2026-11-10'`, [r1]))[0].n).toBe(16)
+    expect((await db.sql(`select count(*)::int n from contacts where location_id = $1`, [r.location_id]))[0].n).toBe(1)
+    // тот же телефон — та же точка, повторно в план не добавляется
+    const [{ r: again }] = await db.as(r1, (q) => q(`select add_found_point($1, '2026-11-10', $2::jsonb) as r`,
+      [r1, JSON.stringify({ name: 'Шиномонтаж', phone: '87011112233' })]))
+    expect(again).toMatchObject({ existed: true, location_id: r.location_id, visit_id: r.visit_id })
+    await expectPgError(db.as(r2, (q) => q(`select add_found_point($1, '2026-11-10', '{"name":"X"}'::jsonb)`, [r1])), 'только в свой план')
+    // обычное добавление в полный день по-прежнему запрещено
+    const [{ id: extra }] = await db.sql(`insert into locations (name, city, manager_id) values ('Лишняя', 'Астана', $1) returning id`, [r1])
+    await expectPgError(db.as(r1, async (q) => {
+      const [{ p }] = await q('select ensure_visit_plan($1, $2) as p', [r1, '2026-11-10'])
+      return q('select add_plan_visits($1, $2)', [p, [extra]])
+    }), 'максимум')
+  })
+})
