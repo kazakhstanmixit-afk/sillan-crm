@@ -14,6 +14,7 @@ import { fetchPlan, type PlanVisit } from './api'
 import { distanceKm, fmtKm, hasCoords, orderByDistance } from '@/lib/geo'
 import { AddPointsDialog } from './AddPointsDialog'
 import { NewPointDialog } from './NewPointDialog'
+import { DeleteLocationsDialog } from '@/features/clients/DeleteLocationsDialog'
 import { VisitResultDialog } from './VisitResultDialog'
 import { VisitEditDialog, VisitStatusDialog, type StatusAction } from './VisitStatusDialog'
 
@@ -101,6 +102,7 @@ export default function PlanPage() {
   const [statusFor, setStatusFor] = useState<{ v: PlanVisit; action: StatusAction } | null>(null)
   const [editFor, setEditFor] = useState<PlanVisit | null>(null)
   const [removing, setRemoving] = useState<PlanVisit | null>(null)
+  const [deleting, setDeleting] = useState<PlanVisit | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
 
   const done = visits.filter((v) => v.status === 'done').length
@@ -212,6 +214,7 @@ export default function PlanPage() {
                                 {isPlanned && <MenuItem onClick={() => { setStatusFor({ v, action: 'cancelled' }); setMenu(null) }}>Отменить</MenuItem>}
                                 {(v.status === 'cancelled' || v.status === 'failed') && <MenuItem onClick={() => { setStatusFor({ v, action: 'planned' }); setMenu(null) }}>Вернуть в план</MenuItem>}
                                 {isPlanned && !v.result && <MenuItem danger icon={<Trash2 className="size-3.5" />} onClick={() => { setRemoving(v); setMenu(null) }}>Убрать из плана</MenuItem>}
+                                {perms.archive && <MenuItem danger icon={<Trash2 className="size-3.5" />} onClick={() => { setDeleting(v); setMenu(null) }}>Удалить точку из базы</MenuItem>}
                               </div>
                             )}
                           </div>
@@ -243,6 +246,7 @@ export default function PlanPage() {
       <ConfirmDialog open={!!removing} title="Убрать точку из плана?" loading={remove.isPending} onClose={() => setRemoving(null)} onConfirm={() => removing && remove.mutate(removing)} confirmText="Убрать">
         «{removing?.location?.name}» будет убрана из плана на {fmtDate(date)}. Если визит не состоялся — лучше отметить «Не состоялся» или «Перенести», чтобы это осталось в истории.
       </ConfirmDialog>
+      <DeleteLocationsDialog open={!!deleting} onClose={() => setDeleting(null)} getIds={() => (deleting ? [deleting.location_id] : [])} label={`«${deleting?.location?.name ?? 'Точка'}»`} />
     </div>
   )
 }

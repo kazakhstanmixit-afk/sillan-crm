@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Columns3, Download, Filter, Plus, UserCheck, PencilLine, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Columns3, Download, Filter, Plus, UserCheck, PencilLine, Trash2, X } from 'lucide-react'
 import {
   Badge, Button, Card, Checkbox, EmptyState, ErrorState, Input, PageHeader, Pagination, Select, Spinner, useToast,
 } from '@/components/ui'
@@ -16,6 +16,7 @@ import {
 import { CLIENT_COLUMNS, loadColumnPrefs, saveColumnPrefs, type ColumnPrefs } from './columns'
 import { ColumnSettings } from './ColumnSettings'
 import { BulkAssignDialog, BulkEditDialog } from './BulkDialogs'
+import { DeleteLocationsDialog } from './DeleteLocationsDialog'
 
 export default function ClientsPage() {
   const [params, setParams] = useSearchParams()
@@ -70,6 +71,7 @@ export default function ClientsPage() {
   const [colsOpen, setColsOpen] = useState(false)
   const [assignOpen, setAssignOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [exporting, setExporting] = useState<string | null>(null)
 
   const doExport = async (kind: 'csv' | 'xlsx') => {
@@ -176,6 +178,7 @@ export default function ClientsPage() {
           <span className="flex-1" />
           {perms.assign && <Button size="sm" variant="primary" icon={<UserCheck className="size-3.5" />} onClick={() => setAssignOpen(true)}>Назначить ответственного</Button>}
           {perms.edit_all && <Button size="sm" icon={<PencilLine className="size-3.5" />} onClick={() => setEditOpen(true)}>Изменить поля</Button>}
+          {perms.archive && !filters.archived && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
           <Button size="sm" variant="ghost" onClick={() => { setSelected(new Set()); setAllMatching(false) }}>Снять выбор</Button>
         </div>
       )}
@@ -251,6 +254,7 @@ export default function ClientsPage() {
       <ColumnSettings open={colsOpen} onClose={() => setColsOpen(false)} prefs={prefs} onChange={updatePrefs} />
       <BulkAssignDialog open={assignOpen} onClose={() => setAssignOpen(false)} getRows={getSelectedRows} onDone={() => setSelected(new Set())} />
       <BulkEditDialog open={editOpen} onClose={() => setEditOpen(false)} getRows={getSelectedRows} />
+      <DeleteLocationsDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} getIds={async () => (await getSelectedRows()).map((r) => r.id)} label={`Выбрано точек: ${selectionCount}`} onDone={() => { setSelected(new Set()); setAllMatching(false) }} />
     </div>
   )
 }

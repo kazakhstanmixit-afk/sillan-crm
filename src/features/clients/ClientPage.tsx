@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, CalendarPlus, ClipboardList, MapPin, MessageCircle, Phone } from 'lucide-react'
-import { Badge, Button, EmptyState, ErrorState, Spinner, Tabs } from '@/components/ui'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft, CalendarPlus, ClipboardList, MapPin, MessageCircle, Phone, RotateCcw, Trash2 } from 'lucide-react'
+import { Badge, Button, EmptyState, ErrorState, Spinner, Tabs, useToast } from '@/components/ui'
+import { unwrap } from '@/lib/errors'
+import { DeleteLocationsDialog } from './DeleteLocationsDialog'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { mapHref } from '@/lib/format'
@@ -49,6 +51,14 @@ export default function ClientPage() {
 
   const [planOpen, setPlanOpen] = useState(false)
   const [requestOpen, setRequestOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const qc = useQueryClient()
+  const toast = useToast()
+  const restore = useMutation({
+    mutationFn: async () => unwrap(await supabase.rpc('restore_locations', { p_ids: [id] })),
+    onSuccess: () => { toast.success('Точка восстановлена'); qc.invalidateQueries({ queryKey: ['clients'] }); qc.invalidateQueries({ queryKey: keys.location }) },
+    onError: (e) => toast.error(e),
+  })
 
   if (loc.isLoading) return <Spinner />
   if (loc.error) return <ErrorState error={loc.error} onRetry={() => loc.refetch()} />
@@ -92,8 +102,10 @@ export default function ClientPage() {
               <>
                 <Button size="sm" icon={<CalendarPlus className="size-3.5" />} onClick={() => setPlanOpen(true)}>В план</Button>
                 <Button size="sm" icon={<ClipboardList className="size-3.5" />} onClick={() => setRequestOpen(true)}>Заявка</Button>
+                {perms.archive && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
               </>
             )}
+            {l.archived_at && perms.archive && <Button size="sm" icon={<RotateCcw className="size-3.5" />} loading={restore.isPending} onClick={() => restore.mutate()}>Восстановить</Button>}
           </div>
         </div>
       </div>
@@ -126,6 +138,7 @@ export default function ClientPage() {
 
       <AddToPlanDialog open={planOpen} onClose={() => setPlanOpen(false)} locationIds={[id]} />
       <RequestFormModal open={requestOpen} onClose={() => setRequestOpen(false)} locationId={id} />
+      <DeleteLocationsDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} getIds={() => [id]} label={`«${l.name}»`} onDone={() => nav('/clients')} />
     </div>
   )
 }

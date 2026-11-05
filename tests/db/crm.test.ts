@@ -698,3 +698,48 @@ describe.skipIf(!TEST_DB_URL)('Новая точка по пути', () => {
     }), 'максимум')
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Удаление точки и приоритет Астаны', () => {
+  let db: TestDb
+  let head: string, r1: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    head = await db.createUser('Руководитель', 'head')
+    r1 = await db.createUser('Михаил Ким', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  it('удаление: только руководитель; пропадает из планов, история остаётся; восстанавливается', async () => {
+    const [{ id }] = await db.sql(`insert into locations (name, city, lat, lng, manager_id) values ('Дубль СТО', 'Астана', 51.15, 71.45, $1) returning id`, [r1])
+    await db.as(r1, async (q) => {
+      const [{ p }] = await q('select ensure_visit_plan($1, $2) as p', [r1, '2026-11-20'])
+      await q('select add_plan_visits($1, $2)', [p, [id]])
+    })
+    await db.sql(`insert into visits (location_id, manager_id, planned_date, status, actual_at, result) values ($1, $2, '2026-11-02', 'done', now(), 'Был')`, [id, r1])
+    await expectPgError(db.as(r1, (q) => q('select delete_locations($1)', [[id]])), 'руководитель или администратор')
+    const [{ n }] = await db.as(head, (q) => q(`select delete_locations($1, 'Дубль') as n`, [[id]]))
+    expect(n).toBe(1)
+    const rest = await db.sql(`select status from visits where location_id = $1`, [id])
+    expect(rest.map((r) => r.status)).toEqual(['done'])
+    expect((await db.sql(`select archived_at is not null a from locations where id = $1`, [id]))[0].a).toBe(true)
+    expect((await db.sql(`select count(*)::int n from comments where location_id = $1 and body like 'Точка удалена%'`, [id]))[0].n).toBe(1)
+    await db.as(head, (q) => q('select restore_locations($1)', [[id]]))
+    expect((await db.sql(`select archived_at from locations where id = $1`, [id]))[0].archived_at).toBeNull()
+  })
+
+  it('автоплан: сначала все точки Астаны, Косшы и пригороды — в последние дни', async () => {
+    const vals: string[] = []
+    for (let i = 0; i < 30; i++) vals.push(`('Астана ${i}', 'Астана', ${51.12 + (i % 6) * 0.004}, ${71.42 + Math.floor(i / 6) * 0.004})`)
+    for (let i = 0; i < 10; i++) vals.push(`('Косшы ${i}', 'Косшы', ${50.97 + (i % 5) * 0.002}, ${71.35 + Math.floor(i / 5) * 0.002})`)
+    // в «Астане» по городу, но за 14 км от центра — тоже в конец
+    vals.push(`('Пригород', 'Астана', 51.30, 71.75)`)
+    await db.sql(`delete from visits`)
+    await db.sql(`insert into locations (name, city, lat, lng) values ${vals.join(',')}`)
+    await db.as(head, (q) => q(`select auto_plan('2026-11-09', 15, 150)`))
+    const rows = await db.sql(`select l.name, v.planned_date::text d from visits v join locations l on l.id = v.location_id where v.status = 'planned' and v.auto_planned`)
+    const lastAstana = rows.filter((r) => r.name.startsWith('Астана ')).map((r) => r.d).sort().at(-1)!
+    const firstRegion = rows.filter((r) => r.name.startsWith('Косшы') || r.name === 'Пригород').map((r) => r.d).sort()[0]
+    expect(rows.filter((r) => r.name.startsWith('Астана ')).length).toBe(30)
+    expect(firstRegion > lastAstana).toBe(true)
+  })
+})
