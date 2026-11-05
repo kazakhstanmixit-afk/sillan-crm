@@ -709,21 +709,23 @@ describe.skipIf(!TEST_DB_URL)('Удаление точки и приоритет
   })
   afterAll(async () => db?.close())
 
-  it('удаление: только руководитель; пропадает из планов, история остаётся; восстанавливается', async () => {
+  it('удаление: торговый — только свои, руководитель — любые; пропадает из планов, история остаётся; восстанавливается', async () => {
     const [{ id }] = await db.sql(`insert into locations (name, city, lat, lng, manager_id) values ('Дубль СТО', 'Астана', 51.15, 71.45, $1) returning id`, [r1])
     await db.as(r1, async (q) => {
       const [{ p }] = await q('select ensure_visit_plan($1, $2) as p', [r1, '2026-11-20'])
       await q('select add_plan_visits($1, $2)', [p, [id]])
     })
     await db.sql(`insert into visits (location_id, manager_id, planned_date, status, actual_at, result) values ($1, $2, '2026-11-02', 'done', now(), 'Был')`, [id, r1])
-    await expectPgError(db.as(r1, (q) => q('select delete_locations($1)', [[id]])), 'руководитель или администратор')
-    const [{ n }] = await db.as(head, (q) => q(`select delete_locations($1, 'Дубль') as n`, [[id]]))
+    const [{ id: foreign }] = await db.sql(`insert into locations (name, city) values ('Чужая', 'Астана') returning id`)
+    await expectPgError(db.as(r1, (q) => q('select delete_locations($1)', [[id, foreign]])), 'только свои')
+    const [{ n }] = await db.as(r1, (q) => q(`select delete_locations($1, 'Дубль') as n`, [[id]]))
     expect(n).toBe(1)
     const rest = await db.sql(`select status from visits where location_id = $1`, [id])
     expect(rest.map((r) => r.status)).toEqual(['done'])
     expect((await db.sql(`select archived_at is not null a from locations where id = $1`, [id]))[0].a).toBe(true)
     expect((await db.sql(`select count(*)::int n from comments where location_id = $1 and body like 'Точка удалена%'`, [id]))[0].n).toBe(1)
-    await db.as(head, (q) => q('select restore_locations($1)', [[id]]))
+    await db.as(r1, (q) => q('select restore_locations($1)', [[id]]))
+    await db.as(head, (q) => q('select delete_locations($1)', [[foreign]]))
     expect((await db.sql(`select archived_at from locations where id = $1`, [id]))[0].archived_at).toBeNull()
   })
 

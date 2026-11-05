@@ -148,7 +148,7 @@ export default function ClientsPage() {
           <Button size="sm" variant="ghost" icon={<Filter className="size-3.5" />} onClick={() => setShowMore((s) => !s)}>
             Даты визитов
           </Button>
-          {perms.archive && <Checkbox label="Архив" checked={filters.archived} onChange={(e) => setFilters({ archived: e.target.checked })} />}
+          {<Checkbox label="Архив" checked={filters.archived} onChange={(e) => setFilters({ archived: e.target.checked })} />}
           {filters.company && (
             <Badge color="brand" className="gap-1">
               Компания: {company.data ?? '…'}
@@ -178,7 +178,7 @@ export default function ClientsPage() {
           <span className="flex-1" />
           {perms.assign && <Button size="sm" variant="primary" icon={<UserCheck className="size-3.5" />} onClick={() => setAssignOpen(true)}>Назначить ответственного</Button>}
           {perms.edit_all && <Button size="sm" icon={<PencilLine className="size-3.5" />} onClick={() => setEditOpen(true)}>Изменить поля</Button>}
-          {perms.archive && !filters.archived && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
+          {!filters.archived && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
           <Button size="sm" variant="ghost" onClick={() => { setSelected(new Set()); setAllMatching(false) }}>Снять выбор</Button>
         </div>
       )}

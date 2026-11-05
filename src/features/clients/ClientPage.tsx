@@ -102,10 +102,10 @@ export default function ClientPage() {
               <>
                 <Button size="sm" icon={<CalendarPlus className="size-3.5" />} onClick={() => setPlanOpen(true)}>В план</Button>
                 <Button size="sm" icon={<ClipboardList className="size-3.5" />} onClick={() => setRequestOpen(true)}>Заявка</Button>
-                {perms.archive && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
+                {canEdit && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
               </>
             )}
-            {l.archived_at && perms.archive && <Button size="sm" icon={<RotateCcw className="size-3.5" />} loading={restore.isPending} onClick={() => restore.mutate()}>Восстановить</Button>}
+            {l.archived_at && canEdit && <Button size="sm" icon={<RotateCcw className="size-3.5" />} loading={restore.isPending} onClick={() => restore.mutate()}>Восстановить</Button>}
           </div>
         </div>
       </div>

@@ -214,7 +214,7 @@ export default function PlanPage() {
                                 {isPlanned && <MenuItem onClick={() => { setStatusFor({ v, action: 'cancelled' }); setMenu(null) }}>Отменить</MenuItem>}
                                 {(v.status === 'cancelled' || v.status === 'failed') && <MenuItem onClick={() => { setStatusFor({ v, action: 'planned' }); setMenu(null) }}>Вернуть в план</MenuItem>}
                                 {isPlanned && !v.result && <MenuItem danger icon={<Trash2 className="size-3.5" />} onClick={() => { setRemoving(v); setMenu(null) }}>Убрать из плана</MenuItem>}
-                                {perms.archive && <MenuItem danger icon={<Trash2 className="size-3.5" />} onClick={() => { setDeleting(v); setMenu(null) }}>Удалить точку из базы</MenuItem>}
+                                {(perms.archive || v.location?.manager_id === session!.user.id) && <MenuItem danger icon={<Trash2 className="size-3.5" />} onClick={() => { setDeleting(v); setMenu(null) }}>Удалить точку из базы</MenuItem>}
                               </div>
                             )}
                           </div>
