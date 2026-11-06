@@ -13,14 +13,28 @@ const FUNCTION_URL = `${String(import.meta.env.VITE_SUPABASE_URL ?? '').replace(
 async function callDailyReport(body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke('daily-report', { body })
   if (error) {
+    const ctx = (error as { context?: Response }).context
     let msg = ''
-    try { msg = (await (error as { context?: Response }).context?.json())?.error ?? '' } catch { msg = '' }
-    if (!msg && /Failed to send|not found|404/i.test(error.message)) {
-      msg = 'Функция daily-report не найдена в Supabase или у неё включена проверка JWT — см. инструкцию ниже.'
+    let raw = ''
+    try {
+      const j = await ctx?.json()
+      msg = j?.error ?? ''
+      raw = String(j?.message ?? j?.msg ?? '')
+    } catch { /* не JSON */ }
+    const status = ctx?.status ?? 0
+    if (!msg && status === 401 && /jwt/i.test(raw + error.message)) {
+      msg = 'Функция daily-report отклонила запрос: в её настройках включена проверка JWT. Supabase → Edge Functions → daily-report → Details → выключите «Verify JWT» → Save.'
     }
-    throw new Error(msg || error.message)
+    if (!msg && (status === 404 || /not found|404/i.test(error.message))) {
+      msg = 'Функция daily-report не найдена в Supabase. Edge Functions → Deploy a new function → имя daily-report → вставьте код → Deploy.'
+    }
+    if (!msg && /Failed to send/i.test(error.message)) {
+      msg = 'Не удаётся связаться с функцией daily-report: она не создана в Supabase или у неё включена проверка JWT («Verify JWT»).'
+    }
+    // текст показываем как есть (без подмены на «Сессия истекла»)
+    throw Object.assign(new Error(msg || `Функция daily-report вернула ошибку ${status || ''}: ${raw || error.message}`), { code: 'P0001' })
   }
-  if (data?.error) throw new Error(data.error)
+  if (data?.error) throw Object.assign(new Error(data.error), { code: 'P0001' })
   return data as { sent?: boolean; skipped?: string }
 }
 
