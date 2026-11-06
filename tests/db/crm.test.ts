@@ -748,12 +748,12 @@ describe.skipIf(!TEST_DB_URL)('Удаление точки и приоритет
 
 describe.skipIf(!TEST_DB_URL)('Ежедневный отчёт в Битрикс24', () => {
   let db: TestDb
-  let admin: string, r1: string, r2: string
+  let admin: string, r1: string
   beforeAll(async () => {
     db = await setupTestDb()
     admin = await db.createUser('Админ', 'admin')
     r1 = await db.createUser('Михаил Ким', 'rep')
-    r2 = await db.createUser('Байжан Тулегенов', 'rep')
+    await db.createUser('Байжан Тулегенов', 'rep')
   })
   afterAll(async () => db?.close())
 
