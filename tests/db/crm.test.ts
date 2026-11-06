@@ -745,3 +745,52 @@ describe.skipIf(!TEST_DB_URL)('Удаление точки и приоритет
     expect(firstRegion > lastAstana).toBe(true)
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Ежедневный отчёт в Битрикс24', () => {
+  let db: TestDb
+  let admin: string, r1: string, r2: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    admin = await db.createUser('Админ', 'admin')
+    r1 = await db.createUser('Михаил Ким', 'rep')
+    r2 = await db.createUser('Байжан Тулегенов', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  it('считает точки, интерес и заявки по каждому торговому и в итоге', async () => {
+    const day = '2026-11-06'
+    const locs = await db.sql(`insert into locations (name, city, manager_id) select 'T' || g, 'Астана', $1 from generate_series(1, 4) g returning id`, [r1])
+    const ins = (loc: string, status: string, interest: string | null, purpose: string | null = null) =>
+      db.sql(`insert into visits (location_id, manager_id, planned_date, status, interest, purpose, actual_at, result)
+              values ($1, $2, $3, $4, $5, $6, case when $4 = 'done' then timestamptz '2026-11-06 12:00+05' end, case when $4 = 'done' then 'ok' end)`,
+        [loc, r1, day, status, interest, purpose])
+    await ins(locs[0].id, 'done', 'high')
+    await ins(locs[1].id, 'done', 'medium', 'Новая точка по пути')
+    await ins(locs[2].id, 'failed', null)
+    await ins(locs[3].id, 'planned', null)
+    await db.sql(`insert into requests (kind, location_id, initiator_id, item_name, budget, created_at) values
+      ('service', $1, $2, 'Ремонт подъёмника', null, '2026-11-06 10:00+05'),
+      ('equipment', $1, $2, 'Подъёмник Sillan', 1200000, '2026-11-06 11:00+05'),
+      ('parts', $1, $2, 'Фильтр', null, '2026-11-05 11:00+05')`, [locs[0].id, r1])
+    const [{ t }] = await db.as(admin, (q) => q(`select daily_report_preview($1) as t`, [day]))
+    expect(t).toContain('[B]Отчёт торговых представителей — 06.11.2026, пятница[/B]')
+    expect(t).toContain('[B]Михаил Ким[/B]\nТочки: посещено 2 из 4, не состоялось 1, не отмечено 1\nНовые точки по пути: 1\nИнтерес: высокий 1, средний 1, низкий 0, нет 0\nЗаявки: сервис 1, запчасти 0, покупка оборудования 1 — на 1 200 000 ₸')
+    expect(t).toContain('[B]Байжан Тулегенов[/B]\nТочки: посещено 0 из 0')
+    expect(t).toContain('[B]Итого[/B]: посещено 2 из 4\nИнтерес высокий/средний: 2\nЗаявок: 2 (сервис 1, запчасти 0, покупка оборудования 1) — на 1 200 000 ₸')
+    // день без работы — отчёта нет
+    expect((await db.as(admin, (q) => q(`select daily_report_preview('2026-11-08') as t`)))[0].t).toBeNull()
+  })
+
+  it('права: торговый не видит отчёт и не настраивает; токен расписания закрыт от пользователей', async () => {
+    await expectPgError(db.as(r1, (q) => q(`select daily_report_preview('2026-11-06')`)), 'Недостаточно прав')
+    await expectPgError(db.as(r1, (q) => q(`select setup_daily_report('https://x.supabase.co/functions/v1/daily-report', false, '1', '')`)), 'администратор')
+    await expectPgError(db.as(admin, (q) => q(`select daily_report_check_token('x')`)), 'permission denied')
+    await expectPgError(db.as(admin, (q) => q(`select setup_daily_report('https://x.supabase.co/functions/v1/daily-report', true, 'abc', '')`)), 'ID получателя')
+    await expectPgError(db.as(admin, (q) => q(`select setup_daily_report('https://evil.com/other', false, '15', '')`)), 'адрес функции')
+    const [{ r }] = await db.as(admin, (q) => q(`select setup_daily_report('https://x.supabase.co/functions/v1/daily-report', false, '15', 'https://crm.example') as r`))
+    expect(r).toEqual({ scheduled: false })
+    const [{ value }] = await db.sql(`select value from app_settings where key = 'daily_report'`)
+    expect(value).toMatchObject({ enabled: false, recipient_id: '15', crm_url: 'https://crm.example' })
+    expect((await db.sql(`select count(*)::int n from app.report_secrets`))[0].n).toBe(1)
+  })
+})
