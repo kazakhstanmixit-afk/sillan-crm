@@ -777,6 +777,9 @@ describe.skipIf(!TEST_DB_URL)('Ежедневный отчёт в Битрикс
     expect(t).toContain('[B]Михаил Ким[/B]\nТочки: посещено 2 из 4, не состоялось 1, не отмечено 1\nНовые точки по пути: 1\nИнтерес: высокий 1, средний 1, низкий 0, нет 0\nЗаявки: сервис 1, запчасти 0, покупка оборудования 1 — на 1 200 000 ₸')
     expect(t).toContain('[B]Байжан Тулегенов[/B]\nТочки: посещено 0 из 0')
     expect(t).toContain('[B]Итого[/B]: посещено 2 из 4\nИнтерес высокий/средний: 2\nЗаявок: 2 (сервис 1, запчасти 0, покупка оборудования 1) — на 1 200 000 ₸')
+    // функция отправки (service role, без пользователя) получает тот же текст
+    const [{ t: svc }] = await db.sql(`select s, daily_report_preview($1) as t from (select set_config('role', 'service_role', true) s) x`, [day])
+    expect(svc).toBe(t)
     // день без работы — отчёта нет
     expect((await db.as(admin, (q) => q(`select daily_report_preview('2026-11-08') as t`)))[0].t).toBeNull()
   })
