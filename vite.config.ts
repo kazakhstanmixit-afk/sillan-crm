@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)), 'npm:@supabase/supabase-js@2': '@supabase/supabase-js' } },
   build: { chunkSizeWarningLimit: 1200 },
   test: {
     globals: true,

@@ -12,6 +12,8 @@
 //   { action: 'sync_pending' }             — дослать всё неотправленное (руководство или расписание)
 //   { action: 'test' }                     — проверить вебхук, получить воронки и поля сделки (администратор)
 
+import { createClient } from 'npm:@supabase/supabase-js@2'
+
 export type Kind = 'service' | 'parts' | 'equipment'
 
 export interface DealsConfig {
@@ -308,8 +310,6 @@ if (typeof Deno !== 'undefined') {
     const url = Deno.env.get('SUPABASE_URL')
     const service = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || Deno.env.get('CRM_SECRET_KEY')
     if (!url || !service) return json({ error: 'В функции нет секретного ключа: Supabase → Edge Functions → Secrets → SERVICE_ROLE_KEY' }, 500)
-    const lib = 'npm:@supabase/supabase-js@2'
-    const { createClient } = await import(/* @vite-ignore */ lib)
     const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } })
 
     let body: Record<string, any> = {}
@@ -357,7 +357,7 @@ if (typeof Deno !== 'undefined') {
       if (!requested.length) return json({ error: 'Не указаны заявки' }, 400)
       // торговый отправляет свои заявки и заявки своих клиентов; руководство — любые
       const { data: rows } = await admin.from('requests').select('id, initiator_id, location:locations(manager_id)').in('id', requested)
-      const allowed = ((rows ?? []) as { id: string; initiator_id: string; location: { manager_id: string | null } | null }[])
+      const allowed = ((rows ?? []) as unknown as { id: string; initiator_id: string; location: { manager_id: string | null } | null }[])
         .filter((q) => ['admin', 'head'].includes(role) || q.initiator_id === uid || q.location?.manager_id === uid)
         .map((q) => q.id)
       if (!allowed.length) return json({ error: 'Заявки не найдены' }, 404)
