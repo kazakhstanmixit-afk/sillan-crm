@@ -364,6 +364,10 @@ if (typeof Deno !== 'undefined') {
     const cfg = (setting?.value ?? {}) as DealsConfig
     if (!cfg.enabled) return json({ disabled: true })
 
+    // отправляются только отделы, для которых выбрана воронка
+    const kinds = (Object.keys(KIND_TITLE) as Kind[]).filter((k) => String(cfg.kinds?.[k]?.category_id ?? '') !== '')
+    if (!kinds.length) return json({ error: 'В настройках не выбрана ни одна воронка' }, 400)
+
     // какие сделки
     let ids: string[] = []
     if (action === 'sync') {
@@ -376,10 +380,16 @@ if (typeof Deno !== 'undefined') {
         .map((q) => q.id)
       if (!allowed.length) return json({ error: 'Заявки не найдены' }, 404)
       const { data } = await admin.rpc('bitrix_deals_to_sync', { p_request_ids: allowed, p_limit: 50 })
-      ids = data ?? []
+      const { data: rows2 } = await admin.from('bitrix_deals').select('id, kind').in('id', data ?? [])
+      const skipped = (rows2 ?? []).filter((d: { kind: Kind }) => !kinds.includes(d.kind))
+      if (skipped.length && skipped.length === (rows2 ?? []).length) {
+        return json({ error: `Для отдела «${KIND_TITLE[skipped[0].kind as Kind]}» не выбрана воронка в настройках — заявка ждёт в CRM` }, 400)
+      }
+      ids = (rows2 ?? []).filter((d: { kind: Kind }) => kinds.includes(d.kind)).map((d: { id: string }) => d.id)
     } else if (action === 'sync_pending') {
-      const { data } = await admin.rpc('bitrix_deals_to_sync', { p_request_ids: null, p_limit: 25 })
-      ids = data ?? []
+      const { data } = await admin.from('bitrix_deals').select('id').neq('status', 'sent').lt('attempts', 20)
+        .in('kind', kinds).order('deal_day').order('created_at').limit(25)
+      ids = (data ?? []).map((d: { id: string }) => d.id)
     } else {
       return json({ error: 'Неизвестное действие' }, 400)
     }
@@ -412,7 +422,7 @@ if (typeof Deno !== 'undefined') {
         result.errors.push(`${payload?.location?.name ?? id}: ${msg}`)
       }
     }
-    const { count } = await admin.from('bitrix_deals').select('id', { count: 'exact', head: true }).neq('status', 'sent').lt('attempts', 20)
+    const { count } = await admin.from('bitrix_deals').select('id', { count: 'exact', head: true }).neq('status', 'sent').lt('attempts', 20).in('kind', kinds)
     return json({ ...result, left: count ?? null })
   })
 }
