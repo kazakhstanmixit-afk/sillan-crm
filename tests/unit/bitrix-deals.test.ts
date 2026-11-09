@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDealFields, describePortal, fieldValue, pickAssigned, pushDeal, type Call, type DealPayload, type DealsConfig, type FieldMeta } from '../../supabase/functions/bitrix/index'
+import { buildDealFields, describePortal, fieldValue, pickAssigned, pushDeal, resolveSource, type Call, type DealPayload, type DealsConfig, type FieldMeta } from '../../supabase/functions/bitrix/index'
 
 const META: Record<string, FieldMeta> = {
   UF_CRM_SRC: { type: 'enumeration', listLabel: 'Источник Маркетинг', items: [{ ID: '101', VALUE: 'fb insta' }, { ID: '177', VALUE: 'Торговый представитель' }] },
@@ -46,7 +46,8 @@ function fakeBitrix(existing: { companyByPhone?: string } = {}) {
 
 describe('Сделки Битрикс24 из заявок', () => {
   it('три заявки одного клиента в один отдел — одна сделка с позициями, воронка, источник и поля формы', () => {
-    const f = buildDealFields(payload(), CFG, META, { company: '7', contact: '8', assigned: '15' }, true)
+    const f = buildDealFields(payload(), CFG, META, { company: '7', contact: '8', assigned: '15', source: 'UC_7' }, true)
+    expect(f.SOURCE_ID).toBe('UC_7')
     expect(f.TITLE).toBe('Продажа оборудования: Car wash, автомойка — 3 позиции')
     expect(f.CATEGORY_ID).toBe(46)
     expect(f.ASSIGNED_BY_ID).toBe(15)
@@ -121,5 +122,16 @@ describe('Сделки Битрикс24 из заявок', () => {
     expect(d.user).toEqual({ id: '70', name: 'Нина Васильева' })
     expect(d.categories).toEqual([{ id: '0', name: 'Общая' }, { id: '46', name: 'Отдел Продаж' }])
     expect(d.guess).toEqual({ source: 'UF_CRM_SRC', source_value: 'Торговый представитель', city: 'UF_CRM_CITY', need: 'UF_CRM_NEED', count: 'UF_CRM_CNT', whatsapp: 'UF_CRM_WA' })
+  })
+
+  it('стандартный «Источник»: находит «Торговый представитель», иначе добавляет', async () => {
+    const found: Call = async (m) => m === 'crm.status.list' ? [{ STATUS_ID: 'WEB', NAME: 'Сайт' }, { STATUS_ID: 'UC_7', NAME: 'Торговый  представитель' }] : null
+    expect(await resolveSource(found)).toBe('UC_7')
+    const added: string[] = []
+    const none: Call = async (m, p) => { if (m === 'crm.status.add') added.push((p as { fields: { NAME: string } }).fields.NAME); return m === 'crm.status.list' ? [] : 1 }
+    expect(await resolveSource(none)).toBe('SILLAN_REP')
+    expect(added).toEqual(['Торговый представитель'])
+    const denied: Call = async () => { throw new Error('нет прав') }
+    expect(await resolveSource(denied)).toBeNull()
   })
 })

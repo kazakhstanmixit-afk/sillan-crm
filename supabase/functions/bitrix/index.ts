@@ -91,7 +91,7 @@ export function findField(fields: Record<string, FieldMeta>, ...names: string[])
 }
 
 /** Поля сделки Битрикс24 */
-export function buildDealFields(p: DealPayload, cfg: DealsConfig, meta: Record<string, FieldMeta>, ids: { company?: string | null; contact?: string | null; assigned?: string | null }, isNew: boolean) {
+export function buildDealFields(p: DealPayload, cfg: DealsConfig, meta: Record<string, FieldMeta>, ids: { company?: string | null; contact?: string | null; assigned?: string | null; source?: string | null }, isNew: boolean) {
   const loc = p.location
   const reqs = p.requests
   const kind = KIND_TITLE[p.kind]
@@ -132,6 +132,7 @@ export function buildDealFields(p: DealPayload, cfg: DealsConfig, meta: Record<s
   }
   if (isNew) {
     f.OPENED = 'Y'
+    if (ids.source) f.SOURCE_ID = ids.source
     const cat = cfg.kinds?.[p.kind]?.category_id
     if (cat !== undefined && cat !== '') f.CATEGORY_ID = Number(cat)
     if (ids.assigned) f.ASSIGNED_BY_ID = Number(ids.assigned)
@@ -237,13 +238,26 @@ export async function ensureCompanyContact(call: Call, p: DealPayload, cfg: Deal
   return { company, contact }
 }
 
+/** Стандартное поле «Источник»: значение «Торговый представитель» (найти по названию, иначе добавить) */
+export async function resolveSource(call: Call, name = 'Торговый представитель'): Promise<string | null> {
+  try {
+    const list = (await call('crm.status.list', { filter: { ENTITY_ID: 'SOURCE' } })) as { STATUS_ID: string; NAME: string }[]
+    const found = (list ?? []).find((x) => norm(x.NAME) === norm(name))
+    if (found) return found.STATUS_ID
+    await call('crm.status.add', { fields: { ENTITY_ID: 'SOURCE', STATUS_ID: 'SILLAN_REP', NAME: name, SORT: 500 } })
+    return 'SILLAN_REP'
+  } catch {
+    return null // нет прав на справочник — остаётся «Источник Маркетинг» и описание источника
+  }
+}
+
 /** Создать или обновить сделку. Возвращает ID в Битриксе. */
-export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, meta: Record<string, FieldMeta>) {
+export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, meta: Record<string, FieldMeta>, sourceId: string | null = null) {
   if (!p.requests.length) return { deal: p.bitrix_deal_id, company: p.bitrix_company_id, contact: p.bitrix_contact_id, assigned: p.bitrix_assigned_id, warning: null as string | null }
   const assigned = pickAssigned(p, cfg)
   const { company, contact } = await ensureCompanyContact(call, p, cfg, assigned)
   const isNew = !p.bitrix_deal_id
-  const fields = buildDealFields(p, cfg, meta, { company, contact, assigned }, isNew)
+  const fields = buildDealFields(p, cfg, meta, { company, contact, assigned, source: sourceId }, isNew)
   let deal = p.bitrix_deal_id
   if (isNew) {
     deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
@@ -373,6 +387,7 @@ if (typeof Deno !== 'undefined') {
     let meta: Record<string, FieldMeta> = {}
     try { meta = await call('crm.deal.fields', {}) } catch (e) { return json({ error: e instanceof Error ? e.message : String(e) }, 502) }
 
+    const sourceId = ids.length ? await resolveSource(call, cfg.fields?.source_value || 'Торговый представитель') : null
     const result = { sent: 0, errors: [] as string[], warnings: [] as string[], deals: [] as { id: string; bitrix_deal_id: string | null }[] }
     for (const id of ids) {
       const { data: claimed } = await admin.rpc('bitrix_claim_deal', { p_id: id })
@@ -380,7 +395,7 @@ if (typeof Deno !== 'undefined') {
       const { data: p } = await admin.rpc('bitrix_deal_payload', { p_id: id })
       const payload = p as DealPayload
       try {
-        const r = await pushDeal(call, payload, cfg, meta)
+        const r = await pushDeal(call, payload, cfg, meta, sourceId)
         await admin.rpc('bitrix_finish_deal', {
           p_id: id, p_claimed: claimed, p_ok: true, p_error: null, p_deal_id: r.deal, p_company_id: r.company,
           p_contact_id: r.contact, p_request_ids: payload.requests.map((q) => q.id), p_assigned_id: r.assigned,
