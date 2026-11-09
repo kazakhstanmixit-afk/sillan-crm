@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { PlugZap, Send } from 'lucide-react'
+import { CopyX, PlugZap, Send } from 'lucide-react'
 import { Button, Card, Checkbox, Field, Input, QueryState, Select, useToast } from '@/components/ui'
 import { supabase } from '@/lib/supabase'
 import { unwrap } from '@/lib/errors'
@@ -115,6 +115,32 @@ export function BitrixDealsTab() {
     onSettled: () => setProgress(''),
   })
 
+  type Dup = { ID: string; TITLE: string; DATE_CREATE: string }
+  const [dups, setDups] = useState<Dup[] | null>(null)
+  const findDups = useMutation({
+    mutationFn: async () => {
+      const r = await callBitrix({ action: 'duplicates' })
+      if (r.error) throw Object.assign(new Error(r.error), { code: 'P0001' })
+      return r as unknown as { total: number; duplicates: Dup[] }
+    },
+    onSuccess: (r) => { setDups(r.duplicates); if (!r.duplicates.length) toast.success(`Дублей нет (сделок из CRM в Битриксе: ${r.total})`) },
+    onError: (e) => toast.error(e),
+  })
+  const delDups = useMutation({
+    mutationFn: async () => {
+      const r = await callBitrix({ action: 'delete_duplicates', ids: (dups ?? []).map((d) => d.ID) })
+      if (r.error) throw Object.assign(new Error(r.error), { code: 'P0001' })
+      return r as unknown as { deleted: number; errors: string[] }
+    },
+    onSuccess: (r) => {
+      if (r.errors.length) toast.error(Object.assign(new Error(`Удалено ${r.deleted}, не удалось: ${r.errors[0]}`), { code: 'P0001' }))
+      else toast.success(`Удалено дублей: ${r.deleted}`)
+      setDups(null)
+    },
+    onError: (e) => toast.error(e),
+  })
+  const portalUrl = (cfgQ.data?.portal_url ?? cfg.portal_url ?? '').replace(/\/$/, '')
+
   const catOptions = portal?.categories ?? []
   const fieldOptions = portal?.fields ?? []
   const sourceField = fieldOptions.find((f) => f.code === cfg.fields?.source)
@@ -192,6 +218,22 @@ export function BitrixDealsTab() {
                 <Button icon={<Send className="size-4" />} loading={sendAll.isPending} disabled={!cfgQ.data?.enabled} onClick={() => sendAll.mutate()}>Отправить неотправленные</Button>
                 {progress && <p className="text-slate-500">{progress}</p>}
                 <p className="text-xs text-slate-500">Новые заявки уходят сразу после создания. Если Битрикс был недоступен — CRM досылает каждые 10 минут.</p>
+                <div className="border-t border-slate-100 pt-3">
+                  <Button size="sm" icon={<CopyX className="size-4" />} loading={findDups.isPending} onClick={() => findDups.mutate()}>Найти дубли сделок</Button>
+                  {dups && dups.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      <p>Найдено дублей: <b>{dups.length}</b>. Это копии сделок, которые CRM уже отправила (то же название и компания). Оригиналы остаются.</p>
+                      <ul className="max-h-48 space-y-0.5 overflow-auto text-xs">
+                        {dups.map((d) => (
+                          <li key={d.ID}>
+                            {portalUrl ? <a className="text-brand-700 hover:underline" href={`${portalUrl}/crm/deal/details/${d.ID}/`} target="_blank" rel="noreferrer">№{d.ID}</a> : `№${d.ID}`} — {d.TITLE}
+                          </li>
+                        ))}
+                      </ul>
+                      <Button size="sm" variant="danger" loading={delDups.isPending} onClick={() => { if (window.confirm(`Удалить ${dups.length} дублей в Битрикс24? Оригиналы останутся.`)) delDups.mutate() }}>Удалить дубли ({dups.length})</Button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </QueryState>

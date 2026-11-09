@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bitrixCaller, buildDealFields, describePortal, fieldValue, pickAssigned, pushDeal, resolveSource, type Call, type DealPayload, type DealsConfig, type FieldMeta } from '../../supabase/functions/bitrix/index'
+import { bitrixCaller, buildDealFields, findDuplicates, describePortal, fieldValue, pickAssigned, pushDeal, resolveSource, type Call, type DealPayload, type DealsConfig, type FieldMeta } from '../../supabase/functions/bitrix/index'
 
 const META: Record<string, FieldMeta> = {
   UF_CRM_SRC: { type: 'enumeration', listLabel: 'Источник Маркетинг', items: [{ ID: '101', VALUE: 'fb insta' }, { ID: '177', VALUE: 'Торговый представитель' }] },
@@ -153,5 +153,36 @@ describe('Сделки Битрикс24 из заявок', () => {
     })) as unknown as typeof fetch
     const call = bitrixCaller('https://b.example/rest/1/x/', hang, 50)
     await expect(call('crm.deal.fields', {})).rejects.toThrow('Битрикс24 не ответил за 0 с (crm.deal.fields)')
+  })
+
+  it('ответ Битрикса не дошёл, а сделка создалась — при повторе находит её по метке и обновляет, вторую не создаёт', async () => {
+    const methods: string[] = []
+    const call: Call = async (m, params: any) => {
+      methods.push(m)
+      if (m === 'crm.deal.list') return params.filter.ORIGIN_ID === 'd1' ? [{ ID: '777' }] : []
+      if (m === 'crm.duplicate.findbycomm') return { COMPANY: ['42'], CONTACT: ['43'] }
+      return true
+    }
+    const saved: any[] = []
+    const r = await pushDeal(call, payload(), CFG, META, null, async (x) => { saved.push(x) })
+    expect(r.deal).toBe('777')
+    expect(methods).not.toContain('crm.deal.add')
+    expect(methods).toContain('crm.deal.update')
+    expect(saved).toContainEqual({ deal: '777' })
+  })
+
+  it('новая сделка помечается меткой CRM (ORIGIN_ID)', () => {
+    const f = buildDealFields(payload(), CFG, META, {}, true)
+    expect(f).toMatchObject({ ORIGINATOR_ID: 'sillan-crm', ORIGIN_ID: 'd1' })
+  })
+
+  it('дубли: незнакомые CRM копии известных сделок; чужие сделки не трогает', () => {
+    const rows = [
+      { ID: '10', TITLE: 'Сервис: A — Насос', COMPANY_ID: '1', CATEGORY_ID: '6', DATE_CREATE: '' },
+      { ID: '11', TITLE: 'Сервис: A — Насос', COMPANY_ID: '1', CATEGORY_ID: '6', DATE_CREATE: '' },
+      { ID: '12', TITLE: 'Сервис: B — Насос', COMPANY_ID: '2', CATEGORY_ID: '6', DATE_CREATE: '' },
+      { ID: '13', TITLE: 'Сервис: C — Пресс', COMPANY_ID: '3', CATEGORY_ID: '6', DATE_CREATE: '' },
+    ]
+    expect(findDuplicates(rows, new Set(['11', '12'])).map((d) => d.ID)).toEqual(['10'])
   })
 })

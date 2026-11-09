@@ -45,6 +45,7 @@ export interface DealPayload {
 
 export interface FieldMeta { type: string; isMultiple?: boolean; title?: string; listLabel?: string; formLabel?: string; items?: { ID: string; VALUE: string }[] }
 
+export const ORIGINATOR = 'sillan-crm'
 export const KIND_TITLE: Record<Kind, string> = { service: 'Сервис', parts: 'Запчасти', equipment: 'Продажа оборудования' }
 const URGENCY: Record<string, string> = { low: 'низкая', normal: 'обычная', high: 'высокая', urgent: 'срочно' }
 const money = (n: number) => `${Math.round(n).toLocaleString('ru-RU').replace(/ /g, ' ')} ₸`
@@ -132,6 +133,8 @@ export function buildDealFields(p: DealPayload, cfg: DealsConfig, meta: Record<s
   }
   if (isNew) {
     f.OPENED = 'Y'
+    f.ORIGINATOR_ID = ORIGINATOR
+    f.ORIGIN_ID = p.id
     if (ids.source) f.SOURCE_ID = ids.source
     const cat = cfg.kinds?.[p.kind]?.category_id
     if (cat !== undefined && cat !== '') f.CATEGORY_ID = Number(cat)
@@ -250,6 +253,39 @@ export async function ensureCompanyContact(call: Call, p: DealPayload, cfg: Deal
   return { company, contact }
 }
 
+/** Уже созданная нами сделка: по метке, а для старых — по названию, компании и описанию источника */
+export async function findOurDeal(call: Call, id: string, title: string, company: string | null): Promise<string | null> {
+  const byOrigin = await call('crm.deal.list', { filter: { ORIGINATOR_ID: ORIGINATOR, ORIGIN_ID: id }, select: ['ID'], order: { ID: 'ASC' } })
+  if (Array.isArray(byOrigin) && byOrigin.length) return String(byOrigin[0].ID)
+  const filter: Record<string, unknown> = { TITLE: title, '%SOURCE_DESCRIPTION': 'Sillan CRM' }
+  if (company) filter.COMPANY_ID = Number(company)
+  const byTitle = await call('crm.deal.list', { filter, select: ['ID'], order: { ID: 'ASC' } })
+  return Array.isArray(byTitle) && byTitle.length ? String(byTitle[0].ID) : null
+}
+
+export interface BitrixDealRow { ID: string; TITLE: string; COMPANY_ID: string | null; CATEGORY_ID: string; DATE_CREATE: string }
+
+/** Дубли: наши сделки в Битриксе, о которых CRM не знает, при том что такая же (название + компания) у CRM есть */
+export function findDuplicates(rows: BitrixDealRow[], known: Set<string>) {
+  const key = (d: BitrixDealRow) => `${d.TITLE}|${d.COMPANY_ID ?? ''}`
+  const knownKeys = new Set(rows.filter((d) => known.has(String(d.ID))).map(key))
+  return rows.filter((d) => !known.has(String(d.ID)) && knownKeys.has(key(d)))
+}
+
+export async function listOurDeals(call: Call): Promise<BitrixDealRow[]> {
+  const all: BitrixDealRow[] = []
+  for (let page = 0; page < 40; page++) {
+    const rows = await call('crm.deal.list', {
+      filter: { '%SOURCE_DESCRIPTION': 'Sillan CRM' }, select: ['ID', 'TITLE', 'COMPANY_ID', 'CATEGORY_ID', 'DATE_CREATE'],
+      order: { ID: 'ASC' }, start: page * 50,
+    })
+    if (!Array.isArray(rows)) break
+    all.push(...rows)
+    if (rows.length < 50) break
+  }
+  return all
+}
+
 /** Стандартное поле «Источник»: значение «Торговый представитель» (найти по названию, иначе добавить) */
 export async function resolveSource(call: Call, name = 'Торговый представитель'): Promise<string | null> {
   try {
@@ -275,8 +311,17 @@ export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, met
   const fields = buildDealFields(p, cfg, meta, { company, contact, assigned, source: sourceId }, isNew)
   let deal = p.bitrix_deal_id
   if (isNew) {
-    deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
-    await save({ deal }) // повтор после обрыва обновит эту сделку, а не создаст вторую
+    // сделка могла создаться, а ответ Битрикса не дошёл — тогда обновляем её, а не создаём вторую
+    const existing = await findOurDeal(call, p.id, String(fields.TITLE), company)
+    if (existing) {
+      deal = existing
+      await save({ deal })
+      const { CATEGORY_ID: _c, ASSIGNED_BY_ID: _a, ORIGINATOR_ID: _o, ORIGIN_ID: _i, ...upd } = fields
+      await call('crm.deal.update', { id: Number(deal), fields: upd })
+    } else {
+      deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
+      await save({ deal })
+    }
   } else {
     await call('crm.deal.update', { id: Number(deal), fields })
   }
@@ -371,11 +416,31 @@ if (typeof Deno !== 'undefined') {
       return json({ disabled: true, error: 'Не задан вебхук Битрикс24: Supabase → Edge Functions → Secrets → BITRIX_WEBHOOK_URL' }, action === 'sync' ? 200 : 400)
     }
     const t0 = Date.now()
-    const rawCall = bitrixCaller(webhook, fetch, 20_000)
+    const rawCall = bitrixCaller(webhook, fetch, 30_000)
     // общий запас по времени: после 120 с новых запросов в Битрикс не начинаем
     const call: Call = (method, params) => {
       if (Date.now() - t0 > 120_000) return Promise.reject(new Error('Не успели за один вызов — отправится в следующий раз'))
       return rawCall(method, params)
+    }
+
+    if (action === 'duplicates' || action === 'delete_duplicates') {
+      if (role !== 'admin') return json({ error: 'Доступно администратору' }, 403)
+      try {
+        const rows = await listOurDeals(call)
+        const { data: knownRows } = await admin.from('bitrix_deals').select('bitrix_deal_id').not('bitrix_deal_id', 'is', null)
+        const known = new Set<string>((knownRows ?? []).map((x: { bitrix_deal_id: string }) => String(x.bitrix_deal_id)))
+        const dups = findDuplicates(rows, known)
+        if (action === 'duplicates') return json({ total: rows.length, duplicates: dups })
+        const asked = new Set<string>((Array.isArray(body.ids) ? body.ids : []).map(String))
+        let deleted = 0
+        const errors: string[] = []
+        for (const d of dups.filter((x) => asked.has(String(x.ID)))) {
+          try { await call('crm.deal.delete', { id: Number(d.ID) }); deleted++ } catch (e) { errors.push(`№${d.ID}: ${e instanceof Error ? e.message : e}`) }
+        }
+        return json({ deleted, errors })
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, 502)
+      }
     }
 
     if (action === 'test') {
@@ -427,6 +492,7 @@ if (typeof Deno !== 'undefined') {
       if (Date.now() - started > 80_000) break
       const { data: claimed } = await admin.rpc('bitrix_claim_deal', { p_id: id })
       if (!claimed) continue // уже отправляется
+      await admin.from('bitrix_deals').update({ locked_until: new Date(Date.now() + 10 * 60_000).toISOString() }).eq('id', id)
       const { data: p } = await admin.rpc('bitrix_deal_payload', { p_id: id })
       const payload = p as DealPayload
       try {
