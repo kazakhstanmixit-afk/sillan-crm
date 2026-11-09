@@ -797,3 +797,75 @@ describe.skipIf(!TEST_DB_URL)('Ежедневный отчёт в Битрикс
     expect((await db.sql(`select count(*)::int n from app.report_secrets`))[0].n).toBe(1)
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Битрикс24: заявки собираются в сделки', () => {
+  let db: TestDb
+  let admin: string, r1: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    admin = await db.createUser('Админ', 'admin')
+    r1 = await db.createUser('Талгат Исмаил', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  const svc = <T = any>(sql: string, params: unknown[] = []) =>
+    db.sql<any>(`select s, ${sql} from (select set_config('role', 'service_role', true) s) x`, params) as Promise<T[]>
+
+  it('клиент + отдел + день = одна сделка; другой отдел и другой день — отдельные', async () => {
+    const [{ id: loc }] = await db.sql(`insert into locations (name, city, manager_id, phones) values ('Das Service, СТО', 'Астана', $1, '{+77011112233}') returning id`, [r1])
+    await db.sql(`insert into contacts (location_id, full_name, phone, decision_role) values ($1, 'Ерлан', '+77015554433', 'decision_maker')`, [loc])
+    const add = (kind: string, item: string, at: string) => db.as(r1, (q) =>
+      q(`insert into requests (kind, location_id, item_name, created_at) values ($1, $2, $3, $4) returning bitrix_deal_ref`, [kind, loc, item, at]))
+    const [a] = await add('parts', 'Тросы на подъёмник', '2026-11-06 10:00+05')
+    const [b] = await add('parts', 'Пальцы для резков', '2026-11-06 12:00+05')
+    const [c] = await add('equipment', 'Сканер', '2026-11-06 12:30+05')
+    const [d] = await add('parts', 'Зажим', '2026-11-07 09:00+05')
+    expect(a.bitrix_deal_ref).toBe(b.bitrix_deal_ref)
+    expect(c.bitrix_deal_ref).not.toBe(a.bitrix_deal_ref)
+    expect(d.bitrix_deal_ref).not.toBe(a.bitrix_deal_ref)
+
+    // торговый не может сам пометить заявку отправленной и не видит служебных функций
+    await db.as(r1, (q) => q(`update requests set bitrix_synced_at = now() where bitrix_deal_ref = $1`, [a.bitrix_deal_ref]))
+    expect((await db.sql(`select count(*)::int n from requests where bitrix_synced_at is not null`))[0].n).toBe(0)
+    await expectPgError(db.as(r1, (q) => q(`select bitrix_deal_payload($1)`, [a.bitrix_deal_ref])), 'permission denied')
+    await expectPgError(db.as(admin, (q) => q(`select bitrix_claim_deal($1)`, [a.bitrix_deal_ref])), 'permission denied')
+
+    // данные для сделки
+    const [{ p }] = await svc<{ p: any }>(`bitrix_deal_payload($1) as p`, [a.bitrix_deal_ref])
+    expect(p.kind).toBe('parts')
+    expect(p.requests.map((r: any) => r.item_name)).toEqual(['Тросы на подъёмник', 'Пальцы для резков'])
+    expect(p.requests[0].initiator).toBe('Талгат Исмаил')
+    expect(p.contacts[0]).toMatchObject({ full_name: 'Ерлан', decision_maker: true })
+    expect(p.location.phones).toEqual(['+77011112233'])
+
+    // взять в работу: второй раз нельзя, пока идёт отправка
+    const [{ t: claimed }] = await svc<{ t: string }>(`bitrix_claim_deal($1) as t`, [a.bitrix_deal_ref])
+    expect(claimed).toBeTruthy()
+    expect((await svc<{ t: string | null }>(`bitrix_claim_deal($1) as t`, [a.bitrix_deal_ref]))[0].t).toBeNull()
+    // пока отправляли — пришла ещё заявка: сделка остаётся к отправке, отправленные заявки помечены
+    const [e] = await add('parts', 'Шланг', '2026-11-06 18:00+05')
+    expect(e.bitrix_deal_ref).toBe(a.bitrix_deal_ref)
+    const ids = p.requests.map((r: any) => r.id)
+    await svc(`bitrix_finish_deal($1, $2, true, null, '900', '42', '43', $3::uuid[], '15') as f`, [a.bitrix_deal_ref, claimed, ids])
+    const [deal] = await db.sql(`select status, bitrix_deal_id, bitrix_company_id, bitrix_assigned_id, locked_until from bitrix_deals where id = $1`, [a.bitrix_deal_ref])
+    expect(deal).toMatchObject({ status: 'pending', bitrix_deal_id: '900', bitrix_company_id: '42', bitrix_assigned_id: '15', locked_until: null })
+    expect((await db.sql(`select count(*)::int n from requests where bitrix_synced_at is not null`))[0].n).toBe(2)
+
+    // следующая сделка этого клиента получает ту же компанию и того же менеджера в этом отделе
+    const [{ p: p2 }] = await svc<{ p: any }>(`bitrix_deal_payload($1) as p`, [d.bitrix_deal_ref])
+    expect(p2).toMatchObject({ bitrix_company_id: '42', bitrix_contact_id: '43', prev_assigned_id: '15', kind_created: 1 })
+
+    // к отправке: все неотправленные
+    const pend = await svc<{ d: string }>(`bitrix_deals_to_sync(null, 25) as d`)
+    expect(pend.map((r) => r.d).sort()).toEqual([a.bitrix_deal_ref, c.bitrix_deal_ref, d.bitrix_deal_ref].sort())
+    const [{ st }] = await db.as(admin, (q) => q(`select bitrix_deals_stats() as st`))
+    expect(st).toMatchObject({ pending: 3, sent: 0, error: 0 })
+  })
+
+  it('настройка автоотправки — только администратор, адрес проверяется', async () => {
+    await expectPgError(db.as(r1, (q) => q(`select setup_bitrix_sync('https://x.supabase.co/functions/v1/bitrix', false)`)), 'администратор')
+    await expectPgError(db.as(admin, (q) => q(`select setup_bitrix_sync('https://evil.com/x', false)`)), 'адрес функции')
+    const [{ r }] = await db.as(admin, (q) => q(`select setup_bitrix_sync('https://x.supabase.co/functions/v1/bitrix', false) as r`))
+    expect(r).toEqual({ scheduled: false })
+  })
+})

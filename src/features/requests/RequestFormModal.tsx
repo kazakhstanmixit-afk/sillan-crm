@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, Select, Textarea, useToast } from '@/components/ui'
 import { BrandNameSelect } from '@/components/BrandSelect'
 import { supabase } from '@/lib/supabase'
+import { syncRequestsToBitrix } from '@/lib/bitrix'
 import { unwrap } from '@/lib/errors'
 import { useDicts } from '@/lib/dictionaries'
 import { REQUEST_DEPT_LABEL, URGENCY_LABEL } from '@/lib/labels'
@@ -84,6 +85,7 @@ export function RequestFormModal({ open, onClose, locationId, visitId, defaultKi
     },
     onSuccess: (r) => {
       toast.success(`Заявка ${r.number} создана`)
+      syncRequestsToBitrix([r.id])
       qc.invalidateQueries({ queryKey: ['requests'] })
       qc.invalidateQueries({ queryKey: ['location', locationId] })
       onClose()

@@ -6,14 +6,15 @@ import { ProfileTab } from './ProfileTab'
 import { UsersTab } from './UsersTab'
 import { DictionariesTab } from './DictionariesTab'
 import { DailyReportTab } from './DailyReportTab'
+import { BitrixDealsTab } from './BitrixDealsTab'
 
-type Tab = 'profile' | 'users' | 'dicts' | 'report'
+type Tab = 'profile' | 'users' | 'dicts' | 'report' | 'bitrix'
 
 export default function SettingsPage() {
   const perms = usePerms()
   const [params] = useSearchParams()
   const initial = (params.get('tab') as Tab) || 'profile'
-  const [tab, setTab] = useState<Tab>((initial === 'users' || initial === 'report') && !perms.manage_users ? 'profile' : initial)
+  const [tab, setTab] = useState<Tab>((initial === 'users' || initial === 'report' || initial === 'bitrix') && !perms.manage_users ? 'profile' : initial)
   return (
     <div>
       <PageHeader title="Настройки и справочники" />
@@ -24,7 +25,7 @@ export default function SettingsPage() {
           { value: 'profile', label: 'Мой профиль' },
           ...(perms.manage_users ? [{ value: 'users' as const, label: 'Пользователи и роли' }] : []),
           { value: 'dicts', label: 'Справочники' },
-          ...(perms.manage_users ? [{ value: 'report' as const, label: 'Отчёт в Битрикс24' }] : []),
+          ...(perms.manage_users ? [{ value: 'report' as const, label: 'Отчёт в Битрикс24' }, { value: 'bitrix' as const, label: 'Сделки в Битрикс24' }] : []),
         ]}
       />
       <div className="mt-4">
@@ -32,6 +33,7 @@ export default function SettingsPage() {
         {tab === 'users' && perms.manage_users && <UsersTab />}
         {tab === 'dicts' && <DictionariesTab />}
         {tab === 'report' && perms.manage_users && <DailyReportTab />}
+        {tab === 'bitrix' && perms.manage_users && <BitrixDealsTab />}
       </div>
     </div>
   )

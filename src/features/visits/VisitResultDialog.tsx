@@ -7,6 +7,7 @@ import { ImagePlus } from 'lucide-react'
 import { Button, Checkbox, ChipSelect, Field, Input, Modal, Select, Spinner, Textarea, useToast, ErrorState } from '@/components/ui'
 import { BrandIdSelect, BrandNameSelect } from '@/components/BrandSelect'
 import { supabase } from '@/lib/supabase'
+import { syncRequestsToBitrix } from '@/lib/bitrix'
 import { unwrap } from '@/lib/errors'
 import { useDicts } from '@/lib/dictionaries'
 import { INTEREST_LABEL, REQUEST_DEPT_LABEL, URGENCY_LABEL } from '@/lib/labels'
@@ -161,10 +162,11 @@ export function VisitResultDialog({ visit, locationName, onClose }: { visit: Vis
         } : {},
         requests,
       }
-      const res = unwrap(await supabase.rpc('save_visit_report', { p_visit: visit.id, p_data: payload })) as { requests: { number: string }[] }
+      const res = unwrap(await supabase.rpc('save_visit_report', { p_visit: visit.id, p_data: payload })) as { requests: { id: string; number: string }[] }
       if (done && v.segment !== (card.data?.loc?.segment ?? '')) {
         unwrap(await supabase.from('locations').update({ segment: v.segment || null }).eq('id', visit.location_id))
       }
+      syncRequestsToBitrix(res.requests.map((r) => r.id))
       let photoErrors: string[] = []
       if (files.length) photoErrors = (await uploadLocationPhotos(visit.location_id, files, visit.id)).errors
       return { numbers: res.requests.map((r) => r.number), photoErrors }

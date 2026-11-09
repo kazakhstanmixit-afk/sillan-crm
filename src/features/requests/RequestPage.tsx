@@ -6,6 +6,7 @@ import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, Info
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { supabase } from '@/lib/supabase'
+import { BitrixStatus } from './BitrixStatus'
 import { unwrap } from '@/lib/errors'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
 import { ATTACHMENT_TYPES, compressImage, normalizeFileType, removeFile, signedUrls, uploadFile, validateFile } from '@/lib/files'
@@ -136,6 +137,7 @@ export default function RequestPage() {
               <InfoRow label="Комментарий">{r.comment}</InfoRow>
               <InfoRow label="Инициатор">{d.profileName(r.initiator_id)}</InfoRow>
               <InfoRow label="Создана">{fmtDateTime(r.created_at)}</InfoRow>
+              {r.bitrix_deal_ref && <InfoRow label="Битрикс24"><BitrixStatus requestId={r.id} dealRef={r.bitrix_deal_ref} syncedAt={r.bitrix_synced_at} /></InfoRow>}
               {r.closed_at && <InfoRow label="Закрыта">{fmtDateTime(r.closed_at)}</InfoRow>}
             </dl>
           </Card>

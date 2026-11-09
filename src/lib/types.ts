@@ -223,6 +223,8 @@ export interface Request {
   created_at: string
   updated_at: string
   closed_at: string | null
+  bitrix_deal_ref?: string | null
+  bitrix_synced_at?: string | null
 }
 
 export interface Deal {
