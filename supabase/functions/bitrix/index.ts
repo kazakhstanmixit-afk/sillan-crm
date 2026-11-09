@@ -166,10 +166,22 @@ export function productRows(p: DealPayload) {
 export type Call = (method: string, params: Record<string, unknown>) => Promise<any>
 
 /** Вызов REST Битрикс24 через вебхук */
-export function bitrixCaller(webhook: string, fetchFn: typeof fetch = fetch): Call {
+export function bitrixCaller(webhook: string, fetchFn: typeof fetch = fetch, timeoutMs = 25_000): Call {
   const base = webhook.replace(/\/+$/, '') + '/'
   return async (method, params) => {
-    const res = await fetchFn(base + method + '.json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) })
+    const t0 = Date.now()
+    let res: Response
+    try {
+      res = await fetchFn(base + method + '.json', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    } catch (e) {
+      const timeout = e instanceof Error && /timeout|abort/i.test(e.name + e.message)
+      console.log(`bitrix ${method}: ${timeout ? 'нет ответа' : 'ошибка сети'} за ${Date.now() - t0} мс`)
+      throw new Error(timeout ? `Битрикс24 не ответил за ${Math.round(timeoutMs / 1000)} с (${method})` : `Битрикс24 недоступен (${method})`)
+    }
+    console.log(`bitrix ${method}: ${res.status} за ${Date.now() - t0} мс`)
     let data: { result?: unknown; error?: string; error_description?: string } = {}
     try { data = await res.json() } catch { /* не JSON */ }
     if (!res.ok || data.error) {
@@ -252,15 +264,19 @@ export async function resolveSource(call: Call, name = 'Торговый пре�
 }
 
 /** Создать или обновить сделку. Возвращает ID в Битриксе. */
-export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, meta: Record<string, FieldMeta>, sourceId: string | null = null) {
+export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, meta: Record<string, FieldMeta>, sourceId: string | null = null,
+  save: (ids: { deal?: string | null; company?: string | null; contact?: string | null; assigned?: string | null }) => Promise<void> = async () => {}) {
   if (!p.requests.length) return { deal: p.bitrix_deal_id, company: p.bitrix_company_id, contact: p.bitrix_contact_id, assigned: p.bitrix_assigned_id, warning: null as string | null }
   const assigned = pickAssigned(p, cfg)
   const { company, contact } = await ensureCompanyContact(call, p, cfg, assigned)
+  // сразу запомнить: если отправка оборвётся, при повторе компания и контакт не задвоятся
+  if (company !== p.bitrix_company_id || contact !== p.bitrix_contact_id || assigned !== p.bitrix_assigned_id) await save({ company, contact, assigned })
   const isNew = !p.bitrix_deal_id
   const fields = buildDealFields(p, cfg, meta, { company, contact, assigned, source: sourceId }, isNew)
   let deal = p.bitrix_deal_id
   if (isNew) {
     deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
+    await save({ deal }) // повтор после обрыва обновит эту сделку, а не создаст вторую
   } else {
     await call('crm.deal.update', { id: Number(deal), fields })
   }
@@ -354,7 +370,13 @@ if (typeof Deno !== 'undefined') {
     if (!/^https:\/\/[^/]+\/rest\/\d+\/[^/]+\/?$/.test(webhook)) {
       return json({ disabled: true, error: 'Не задан вебхук Битрикс24: Supabase → Edge Functions → Secrets → BITRIX_WEBHOOK_URL' }, action === 'sync' ? 200 : 400)
     }
-    const call = bitrixCaller(webhook)
+    const t0 = Date.now()
+    const rawCall = bitrixCaller(webhook, fetch, 20_000)
+    // общий запас по времени: после 120 с новых запросов в Битрикс не начинаем
+    const call: Call = (method, params) => {
+      if (Date.now() - t0 > 120_000) return Promise.reject(new Error('Не успели за один вызов — отправится в следующий раз'))
+      return rawCall(method, params)
+    }
 
     if (action === 'test') {
       try { return json({ ...(await describePortal(call)), portal_url: new URL(webhook).origin }) } catch (e) { return json({ error: e instanceof Error ? e.message : String(e) }, 502) }
@@ -388,7 +410,7 @@ if (typeof Deno !== 'undefined') {
       ids = (rows2 ?? []).filter((d: { kind: Kind }) => kinds.includes(d.kind)).map((d: { id: string }) => d.id)
     } else if (action === 'sync_pending') {
       const { data } = await admin.from('bitrix_deals').select('id').neq('status', 'sent').lt('attempts', 20)
-        .in('kind', kinds).order('deal_day').order('created_at').limit(25)
+        .in('kind', kinds).order('deal_day').order('created_at').limit(10)
       ids = (data ?? []).map((d: { id: string }) => d.id)
     } else {
       return json({ error: 'Неизвестное действие' }, 400)
@@ -399,13 +421,24 @@ if (typeof Deno !== 'undefined') {
 
     const sourceId = ids.length ? await resolveSource(call, cfg.fields?.source_value || 'Торговый представитель') : null
     const result = { sent: 0, errors: [] as string[], warnings: [] as string[], deals: [] as { id: string; bitrix_deal_id: string | null }[] }
+    const started = Date.now()
     for (const id of ids) {
+      // лимит Supabase — 150 с на вызов: остальное — следующим вызовом
+      if (Date.now() - started > 80_000) break
       const { data: claimed } = await admin.rpc('bitrix_claim_deal', { p_id: id })
       if (!claimed) continue // уже отправляется
       const { data: p } = await admin.rpc('bitrix_deal_payload', { p_id: id })
       const payload = p as DealPayload
       try {
-        const r = await pushDeal(call, payload, cfg, meta, sourceId)
+        const save = async (x: { deal?: string | null; company?: string | null; contact?: string | null; assigned?: string | null }) => {
+          const patch: Record<string, string> = {}
+          if (x.deal) patch.bitrix_deal_id = x.deal
+          if (x.company) patch.bitrix_company_id = x.company
+          if (x.contact) patch.bitrix_contact_id = x.contact
+          if (x.assigned) patch.bitrix_assigned_id = x.assigned
+          if (Object.keys(patch).length) await admin.from('bitrix_deals').update(patch).eq('id', id)
+        }
+        const r = await pushDeal(call, payload, cfg, meta, sourceId, save)
         await admin.rpc('bitrix_finish_deal', {
           p_id: id, p_claimed: claimed, p_ok: true, p_error: null, p_deal_id: r.deal, p_company_id: r.company,
           p_contact_id: r.contact, p_request_ids: payload.requests.map((q) => q.id), p_assigned_id: r.assigned,

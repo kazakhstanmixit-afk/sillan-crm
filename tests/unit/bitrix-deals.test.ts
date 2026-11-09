@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDealFields, describePortal, fieldValue, pickAssigned, pushDeal, resolveSource, type Call, type DealPayload, type DealsConfig, type FieldMeta } from '../../supabase/functions/bitrix/index'
+import { bitrixCaller, buildDealFields, describePortal, fieldValue, pickAssigned, pushDeal, resolveSource, type Call, type DealPayload, type DealsConfig, type FieldMeta } from '../../supabase/functions/bitrix/index'
 
 const META: Record<string, FieldMeta> = {
   UF_CRM_SRC: { type: 'enumeration', listLabel: 'Источник Маркетинг', items: [{ ID: '101', VALUE: 'fb insta' }, { ID: '177', VALUE: 'Торговый представитель' }] },
@@ -133,5 +133,25 @@ describe('Сделки Битрикс24 из заявок', () => {
     expect(added).toEqual(['Торговый представитель'])
     const denied: Call = async () => { throw new Error('нет прав') }
     expect(await resolveSource(denied)).toBeNull()
+  })
+
+  it('номер сделки и компании запоминается сразу — при обрыве после создания дубля не будет', async () => {
+    const saved: any[] = []
+    const call: Call = async (m) => {
+      if (m === 'crm.deal.productrows.set') throw new Error('оборвалось')
+      if (m.endsWith('.add')) return m === 'crm.deal.add' ? 900 : 11
+      return []
+    }
+    const r = await pushDeal(call, payload(), CFG, META, null, async (x) => { saved.push(x) })
+    expect(saved).toEqual([{ company: '11', contact: '11', assigned: '15' }, { deal: '900' }])
+    expect(r.warning).toContain('Товары не добавлены')
+  })
+
+  it('Битрикс не отвечает — понятная ошибка по таймауту', async () => {
+    const hang = ((_u: string, init: RequestInit) => new Promise((_res, rej) => {
+      init.signal?.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'TimeoutError' })))
+    })) as unknown as typeof fetch
+    const call = bitrixCaller('https://b.example/rest/1/x/', hang, 50)
+    await expect(call('crm.deal.fields', {})).rejects.toThrow('Битрикс24 не ответил за 0 с (crm.deal.fields)')
   })
 })
