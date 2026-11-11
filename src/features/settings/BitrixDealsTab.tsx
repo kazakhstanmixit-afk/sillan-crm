@@ -13,7 +13,7 @@ interface Cfg {
   create_company?: boolean
   crm_url?: string
   portal_url?: string
-  kinds?: Partial<Record<Kind, { category_id?: string; assigned_ids?: string }>>
+  kinds?: Partial<Record<Kind, { category_id?: string; assigned_ids?: string; assign_rep?: boolean }>>
   fields?: Partial<Record<FieldKey | 'source_value', string>>
 }
 interface Portal {
@@ -55,7 +55,7 @@ export function BitrixDealsTab() {
   const [progress, setProgress] = useState('')
   useEffect(() => { if (cfgQ.data) setCfg(cfgQ.data) }, [cfgQ.data])
 
-  const setKind = (k: Kind, patch: { category_id?: string; assigned_ids?: string }) =>
+  const setKind = (k: Kind, patch: { category_id?: string; assigned_ids?: string; assign_rep?: boolean }) =>
     setCfg((c) => ({ ...c, kinds: { ...c.kinds, [k]: { ...c.kinds?.[k], ...patch } } }))
   const setField = (k: FieldKey | 'source_value', v: string) => setCfg((c) => ({ ...c, fields: { ...c.fields, [k]: v } }))
 
@@ -170,9 +170,12 @@ export function BitrixDealsTab() {
                         </Select>
                       : <Input id={id} value={cfg.kinds?.[kind]?.category_id ?? ''} placeholder="Нажмите «Проверить соединение»" readOnly />}
                   </Field>
-                  <Field label="Менеджеры (ID через запятую)" hint="По очереди; тот же клиент — тому же менеджеру">
+                  <Field label="Менеджеры (ID через запятую)" hint={cfg.kinds?.[kind]?.assign_rep ? 'Если у торгового не указан ID в Битрикс24' : 'По очереди; тот же клиент — тому же менеджеру'}>
                     {(id) => <Input id={id} value={cfg.kinds?.[kind]?.assigned_ids ?? ''} onChange={(e) => setKind(kind, { assigned_ids: e.target.value.replace(/[^\d,\s]/g, '') })} placeholder="Например: 15, 22, 31" />}
                   </Field>
+                  <div className="sm:col-span-2">
+                    <Checkbox label="Ответственный — торговый представитель, создавший заявку" checked={!!cfg.kinds?.[kind]?.assign_rep} onChange={(e) => setKind(kind, { assign_rep: e.target.checked })} />
+                  </div>
                 </div>
               ))}
               <p className="text-xs text-slate-500">ID менеджера — число в адресе его профиля в Битрикс24: …/company/personal/user/<b>70</b>/. Если менеджеров не указать — ответственным станет владелец вебхука.</p>
@@ -238,6 +241,7 @@ export function BitrixDealsTab() {
             )}
           </QueryState>
         </Card>
+        <RepsBitrixCard />
         <Card title="Как подключить (один раз)">
           <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-600">
             <li>Битрикс24 → Разработчикам → Интеграции → ваш входящий вебхук → в «Настройке прав» добавьте <b>«CRM (crm)»</b> → Сохранить. Можно тот же вебхук, что для отчёта.</li>
@@ -248,5 +252,41 @@ export function BitrixDealsTab() {
         </Card>
       </div>
     </div>
+  )
+}
+
+/** ID торговых представителей в Битрикс24 — чтобы назначать их ответственными по своим сделкам */
+function RepsBitrixCard() {
+  const qc = useQueryClient()
+  const toast = useToast()
+  const reps = useQuery({
+    queryKey: ['reps_bitrix'],
+    queryFn: async () => unwrap(await supabase.from('profiles').select('id, full_name, bitrix_user_id').eq('role', 'rep').eq('is_active', true).order('full_name')) as { id: string; full_name: string; bitrix_user_id: string | null }[],
+  })
+  const [vals, setVals] = useState<Record<string, string>>({})
+  useEffect(() => { if (reps.data) setVals(Object.fromEntries(reps.data.map((r) => [r.id, r.bitrix_user_id ?? '']))) }, [reps.data])
+  const save = useMutation({
+    mutationFn: async () => {
+      for (const r of reps.data ?? []) {
+        if ((vals[r.id] ?? '') !== (r.bitrix_user_id ?? '')) unwrap(await supabase.rpc('set_profile_bitrix_id', { p_user: r.id, p_bitrix_id: vals[r.id] ?? '' }))
+      }
+    },
+    onSuccess: () => { toast.success('ID торговых сохранены'); qc.invalidateQueries({ queryKey: ['reps_bitrix'] }) },
+    onError: (e) => toast.error(e),
+  })
+  return (
+    <Card title="Торговые представители в Битрикс24">
+      <QueryState query={reps}>
+        <div className="space-y-2 text-sm">
+          <p className="text-slate-500">ID — число в адресе профиля в Битрикс24: …/company/personal/user/<b>70</b>/. Нужно, если у воронки стоит «Ответственный — торговый».</p>
+          {(reps.data ?? []).map((r) => (
+            <Field key={r.id} label={r.full_name}>
+              {(id) => <Input id={id} value={vals[r.id] ?? ''} onChange={(e) => setVals((v) => ({ ...v, [r.id]: e.target.value.replace(/\D/g, '') }))} inputMode="numeric" placeholder="ID в Битрикс24" />}
+            </Field>
+          ))}
+          <Button size="sm" variant="primary" loading={save.isPending} onClick={() => save.mutate()}>Сохранить ID</Button>
+        </div>
+      </QueryState>
+    </Card>
   )
 }

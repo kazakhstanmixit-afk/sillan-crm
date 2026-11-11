@@ -184,5 +184,28 @@ describe('Сделки Битрикс24 из заявок', () => {
       { ID: '13', TITLE: 'Сервис: C — Пресс', COMPANY_ID: '3', CATEGORY_ID: '6', DATE_CREATE: '' },
     ]
     expect(findDuplicates(rows, new Set(['11', '12'])).map((d) => d.ID)).toEqual(['10'])
+    // копии без оригинала в CRM — оставляем самую раннюю
+    const orphan = [20, 21, 22].map((id) => ({ ID: String(id), TITLE: 'Оборудование: D — Пресс', COMPANY_ID: '4', CATEGORY_ID: '46', DATE_CREATE: '' }))
+    expect(findDuplicates(orphan, new Set()).map((d) => d.ID)).toEqual(['21', '22'])
+  })
+
+  it('ответственный — торговый, создавший заявку, если включено и указан его ID', () => {
+    const cfg: DealsConfig = { ...CFG, kinds: { equipment: { category_id: '50', assigned_ids: '1457', assign_rep: true } } }
+    expect(pickAssigned(payload({ rep_bitrix_id: '321' }), cfg)).toBe('321')
+    expect(pickAssigned(payload({ rep_bitrix_id: null }), cfg)).toBe('1457')
+    expect(pickAssigned(payload({ rep_bitrix_id: '321' }), CFG)).toBe('15')
+  })
+
+  it('Битрикс ответил 500 на создание, но сделку создал — берём её, повторно не создаём', async () => {
+    let adds = 0
+    const call: Call = async (m, params: any) => {
+      if (m === 'crm.deal.add') { adds++; throw new Error('Битрикс24 (crm.deal.add): HTTP 500') }
+      if (m === 'crm.deal.list') return adds && params.filter.ORIGIN_ID === 'd1' ? [{ ID: '555' }] : []
+      if (m.endsWith('.add')) return 1
+      return []
+    }
+    const r = await pushDeal(call, payload(), CFG, META)
+    expect(r.deal).toBe('555')
+    expect(adds).toBe(1)
   })
 })

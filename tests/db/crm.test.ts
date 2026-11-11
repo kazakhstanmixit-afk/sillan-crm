@@ -579,16 +579,16 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     await db.as(head, async (q) => {
       const [{ id }] = await q(`select id from locations where name = 'Ручная'`)
       await q('select assign_locations($1, $2)', [[id], r1])
-      const [{ ensure_visit_plan: plan }] = await q('select ensure_visit_plan($1, $2)', [r1, '2026-11-11'])
+      const [{ ensure_visit_plan: plan }] = await q('select ensure_visit_plan($1, $2)', [r1, '2027-02-03'])
       await q('select add_plan_visits($1, $2)', [plan, [id]])
     })
   })
   afterAll(async () => db?.close())
 
   it('распределяет без пересечений, по ~15 в день, пропускает выходные и праздники; соседей ставит в тот же день', async () => {
-    await expectPgError(db.as(r1, (q) => q(`select auto_plan('2026-11-09')`)), 'Недостаточно прав')
-    const [{ r }] = await db.as(head, (q) => q(`select auto_plan('2026-11-09', 15, 150) as r`))
-    expect(r.from).toBe('2026-11-09')
+    await expectPgError(db.as(r1, (q) => q(`select auto_plan('2027-02-01')`)), 'Недостаточно прав')
+    const [{ r }] = await db.as(head, (q) => q(`select auto_plan('2027-02-01', 15, 150) as r`))
+    expect(r.from).toBe('2027-02-01')
     expect(r.attached_near).toBe(1)
     expect(r.no_coords).toBe(1)
 
@@ -596,11 +596,11 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     expect(new Set(planned.map((p) => p.location_id)).size).toBe(planned.length) // каждая точка — один раз
     expect(planned.length).toBe(92)
     const sosed = planned.find((p) => p.name === 'Сосед 1')!
-    expect(sosed).toMatchObject({ manager_id: r1, d: '2026-11-11' })
+    expect(sosed).toMatchObject({ manager_id: r1, d: '2027-02-03' })
     for (const p of planned) {
       const wd = new Date(p.d + 'T00:00:00Z').getUTCDay()
       expect(wd).not.toBe(0); expect(wd).not.toBe(6)
-      expect(p.d).not.toBe('2026-12-16')
+      expect(p.d).not.toBe('2027-03-08')
     }
     const perDay = new Map<string, number>()
     for (const p of planned) perDay.set(p.manager_id + p.d, (perDay.get(p.manager_id + p.d) ?? 0) + 1)
@@ -620,7 +620,7 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     const t = await db.createUser('test', 'rep')
     await expectPgError(db.as(r1, (q) => q('select set_rep_autoplan($1, false)', [t])), 'Недостаточно прав')
     await db.as(head, (q) => q('select set_rep_autoplan($1, false)', [t]))
-    await db.as(head, (q) => q(`select auto_plan('2026-11-09', 15, 150)`))
+    await db.as(head, (q) => q(`select auto_plan('2027-02-01', 15, 150)`))
     const [{ n }] = await db.sql(`select count(*)::int n from visits where manager_id = $1`, [t])
     expect(n).toBe(0)
     const [{ m }] = await db.sql(`select count(*)::int m from locations where manager_id = $1`, [t])
@@ -653,11 +653,11 @@ describe.skipIf(!TEST_DB_URL)('Автоплан посещений', () => {
     const [{ id: done }] = await db.sql(`select v.id from visits v join locations l on l.id = v.location_id where v.auto_planned and l.name = 'Точка 3'`)
     await db.as(r1, async (q) => q(`select complete_visit($1, '{"status":"done","result":"Был"}'::jsonb)`, [done])).catch(async () =>
       db.as(r2, (q) => q(`select complete_visit($1, '{"status":"done","result":"Был"}'::jsonb)`, [done])))
-    await db.as(head, (q) => q(`select auto_plan('2026-11-09')`))
+    await db.as(head, (q) => q(`select auto_plan('2027-02-01')`))
     const after = (await db.sql(`select count(*)::int n from visits where status = 'planned'`))[0].n
     expect(after).toBe(before - 1)
     const manual = await db.sql(`select v.planned_date::text d, v.auto_planned from visits v join locations l on l.id = v.location_id where l.name = 'Ручная'`)
-    expect(manual).toEqual([{ d: '2026-11-11', auto_planned: false }])
+    expect(manual).toEqual([{ d: '2027-02-03', auto_planned: false }])
     expect((await db.sql(`select count(*)::int n from (select location_id from visits where status='planned' group by 1 having count(*) > 1) s`))[0].n).toBe(0)
   })
 })
@@ -737,7 +737,7 @@ describe.skipIf(!TEST_DB_URL)('Удаление точки и приоритет
     vals.push(`('Пригород', 'Астана', 51.30, 71.75)`)
     await db.sql(`delete from visits`)
     await db.sql(`insert into locations (name, city, lat, lng) values ${vals.join(',')}`)
-    await db.as(head, (q) => q(`select auto_plan('2026-11-09', 15, 150)`))
+    await db.as(head, (q) => q(`select auto_plan('2027-02-01', 15, 150)`))
     const rows = await db.sql(`select l.name, v.planned_date::text d from visits v join locations l on l.id = v.location_id where v.status = 'planned' and v.auto_planned`)
     const lastAstana = rows.filter((r) => r.name.startsWith('Астана ')).map((r) => r.d).sort().at(-1)!
     const firstRegion = rows.filter((r) => r.name.startsWith('Косшы') || r.name === 'Пригород').map((r) => r.d).sort()[0]
@@ -867,5 +867,28 @@ describe.skipIf(!TEST_DB_URL)('Битрикс24: заявки собираютс
     await expectPgError(db.as(admin, (q) => q(`select setup_bitrix_sync('https://evil.com/x', false)`)), 'адрес функции')
     const [{ r }] = await db.as(admin, (q) => q(`select setup_bitrix_sync('https://x.supabase.co/functions/v1/bitrix', false) as r`))
     expect(r).toEqual({ scheduled: false })
+  })
+})
+
+describe.skipIf(!TEST_DB_URL)('Битрикс24: ответственный — торговый', () => {
+  let db: TestDb
+  let admin: string, r1: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    admin = await db.createUser('Админ', 'admin')
+    r1 = await db.createUser('Михаил Ким', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  it('ID торгового в Битрикс24 задаёт администратор; попадает в данные сделки', async () => {
+    await expectPgError(db.as(r1, (q) => q(`select set_profile_bitrix_id($1, '321')`, [r1])), 'администратор')
+    await expectPgError(db.as(admin, (q) => q(`select set_profile_bitrix_id($1, 'abc')`, [r1])), 'число')
+    await db.as(admin, (q) => q(`select set_profile_bitrix_id($1, ' 321 ')`, [r1]))
+    const [{ id: loc }] = await db.sql(`insert into locations (name, city, manager_id) values ('СТО', 'Астана', $1) returning id`, [r1])
+    const [req] = await db.as(r1, (q) => q(`insert into requests (kind, location_id, item_name) values ('equipment', $1, 'Подъёмник') returning bitrix_deal_ref`, [loc]))
+    const [{ p }] = await db.sql(`select s, bitrix_deal_payload($1) as p from (select set_config('role', 'service_role', true) s) x`, [req.bitrix_deal_ref])
+    expect(p.rep_bitrix_id).toBe('321')
+    await db.as(admin, (q) => q(`select set_profile_bitrix_id($1, '')`, [r1]))
+    expect((await db.sql(`select bitrix_user_id from profiles where id = $1`, [r1]))[0].bitrix_user_id).toBeNull()
   })
 })

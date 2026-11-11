@@ -205,7 +205,7 @@ await step('настройки, команда, аналитика открыв�
   await page.getByRole('tab', { name: 'Сделки в Битрикс24' }).click()
   await page.getByText('Отправлено сделок:').waitFor()
   await page.getByLabel('Менеджеры (ID через запятую)').first().fill('15, 22')
-  await page.getByRole('button', { name: 'Сохранить' }).click()
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
   await toast('отправка выключена')
   await shot('settings-bitrix-deals')
   await page.goto(base + '/team')

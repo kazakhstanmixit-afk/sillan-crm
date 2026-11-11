@@ -20,7 +20,7 @@ export interface DealsConfig {
   enabled?: boolean
   create_company?: boolean
   crm_url?: string
-  kinds?: Partial<Record<Kind, { category_id?: string; assigned_ids?: string }>>
+  kinds?: Partial<Record<Kind, { category_id?: string; assigned_ids?: string; assign_rep?: boolean }>>
   fields?: { source?: string; source_value?: string; city?: string; need?: string; count?: string; whatsapp?: string }
 }
 
@@ -34,6 +34,7 @@ export interface DealPayload {
   bitrix_assigned_id: string | null
   prev_assigned_id: string | null
   kind_created: number
+  rep_bitrix_id?: string | null
   location: { id: string; name: string; city: string | null; address: string | null; phones: string[]; legal_name: string | null; bin: string | null }
   contacts: { full_name: string | null; position: string | null; phone: string | null; whatsapp: string | null; email: string | null; decision_maker: boolean }[]
   requests: {
@@ -60,6 +61,8 @@ export function positionName(r: DealPayload['requests'][number]) {
 /** Ответственный: прежний менеджер клиента в этом отделе, иначе следующий по очереди */
 export function pickAssigned(p: DealPayload, cfg: DealsConfig): string | null {
   if (p.bitrix_assigned_id) return p.bitrix_assigned_id
+  // ответственный — сам торговый, создавший заявку (если у него указан ID в Битрикс24)
+  if (cfg.kinds?.[p.kind]?.assign_rep && p.rep_bitrix_id) return p.rep_bitrix_id
   const ids = String(cfg.kinds?.[p.kind]?.assigned_ids ?? '').split(/[\s,;]+/).filter((x) => /^\d+$/.test(x))
   if (!ids.length) return null
   if (p.prev_assigned_id && ids.includes(p.prev_assigned_id)) return p.prev_assigned_id
@@ -186,9 +189,11 @@ export function bitrixCaller(webhook: string, fetchFn: typeof fetch = fetch, tim
     }
     console.log(`bitrix ${method}: ${res.status} за ${Date.now() - t0} мс`)
     let data: { result?: unknown; error?: string; error_description?: string } = {}
-    try { data = await res.json() } catch { /* не JSON */ }
+    const text = await res.text().catch(() => '')
+    try { data = JSON.parse(text) } catch { /* не JSON */ }
     if (!res.ok || data.error) {
-      const msg = data.error_description || data.error || `HTTP ${res.status}`
+      const snippet = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+      const msg = data.error_description || data.error || `HTTP ${res.status}${snippet ? ` — ${snippet}` : ''}`
       if (/higher privileges|insufficient_scope|ACCESS_DENIED/i.test(msg + (data.error ?? ''))) {
         throw new Error('У вебхука нет права «CRM (crm)»: Битрикс24 → Разработчикам → Интеграции → вебхук → добавьте право CRM → Сохранить')
       }
@@ -268,8 +273,17 @@ export interface BitrixDealRow { ID: string; TITLE: string; COMPANY_ID: string |
 /** Дубли: наши сделки в Битриксе, о которых CRM не знает, при том что такая же (название + компания) у CRM есть */
 export function findDuplicates(rows: BitrixDealRow[], known: Set<string>) {
   const key = (d: BitrixDealRow) => `${d.TITLE}|${d.COMPANY_ID ?? ''}`
-  const knownKeys = new Set(rows.filter((d) => known.has(String(d.ID))).map(key))
-  return rows.filter((d) => !known.has(String(d.ID)) && knownKeys.has(key(d)))
+  const groups = new Map<string, BitrixDealRow[]>()
+  for (const d of rows) groups.set(key(d), [...(groups.get(key(d)) ?? []), d])
+  const dups: BitrixDealRow[] = []
+  for (const g of groups.values()) {
+    if (g.length < 2) continue
+    const hasKnown = g.some((d) => known.has(String(d.ID)))
+    // оставить сделку, о которой знает CRM; если такой нет — самую раннюю
+    const keep = hasKnown ? null : g.reduce((a, b) => (Number(a.ID) <= Number(b.ID) ? a : b))
+    dups.push(...g.filter((d) => !known.has(String(d.ID)) && d !== keep))
+  }
+  return dups.sort((a, b) => Number(a.ID) - Number(b.ID))
 }
 
 export async function listOurDeals(call: Call): Promise<BitrixDealRow[]> {
@@ -319,7 +333,14 @@ export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, met
       const { CATEGORY_ID: _c, ASSIGNED_BY_ID: _a, ORIGINATOR_ID: _o, ORIGIN_ID: _i, ...upd } = fields
       await call('crm.deal.update', { id: Number(deal), fields: upd })
     } else {
-      deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
+      try {
+        deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
+      } catch (e) {
+        // Битрикс мог создать сделку и упасть уже после (например, на роботе воронки) — тогда берём её
+        const created = await findOurDeal(call, p.id, String(fields.TITLE), company).catch(() => null)
+        if (!created) throw e
+        deal = created
+      }
       await save({ deal })
     }
   } else {
