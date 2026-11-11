@@ -208,4 +208,17 @@ describe('Сделки Битрикс24 из заявок', () => {
     expect(r.deal).toBe('555')
     expect(adds).toBe(1)
   })
+
+  it('ошибка при создании и проверить нельзя — не повторяем (ambiguous), чтобы не было дубля', async () => {
+    let adds = 0
+    const call: Call = async (m) => {
+      if (m === 'crm.deal.add') { adds++; throw new Error('Битрикс24 (crm.deal.add): HTTP 500') }
+      if (m.endsWith('.add')) return 1
+      return []
+    }
+    const err = await pushDeal(call, payload(), CFG, META).catch((e) => e)
+    expect(adds).toBe(1)
+    expect(err.ambiguous).toBe(true)
+    expect(err.message).toContain('проверьте вручную')
+  })
 })

@@ -199,6 +199,10 @@ export function bitrixCaller(webhook: string, fetchFn: typeof fetch = fetch, tim
       }
       throw new Error(`Битрикс24 (${method}): ${msg}`)
     }
+    if (data.result === undefined) {
+      console.log(`bitrix ${method}: пустой ответ — ${text.replace(/\s+/g, ' ').slice(0, 200)}`)
+      throw new Error(`Битрикс24 (${method}): пустой ответ`)
+    }
     return data.result
   }
 }
@@ -331,26 +335,44 @@ export async function pushDeal(call: Call, p: DealPayload, cfg: DealsConfig, met
       deal = existing
       await save({ deal })
       const { CATEGORY_ID: _c, ASSIGNED_BY_ID: _a, ORIGINATOR_ID: _o, ORIGIN_ID: _i, ...upd } = fields
-      await call('crm.deal.update', { id: Number(deal), fields: upd })
+      try {
+        await call('crm.deal.update', { id: Number(deal), fields: upd })
+      } catch (e) {
+        // сделка уже есть — главное не создать вторую; обновить могут не дать права
+        return { deal, company, contact, assigned, warning: 'Сделка уже была в Битриксе, обновить не удалось: ' + (e instanceof Error ? e.message : String(e)) }
+      }
     } else {
       try {
         deal = String(await call('crm.deal.add', { fields, params: { REGISTER_SONET_EVENT: 'Y' } }))
       } catch (e) {
         // Битрикс мог создать сделку и упасть уже после (например, на роботе воронки) — тогда берём её
         const created = await findOurDeal(call, p.id, String(fields.TITLE), company).catch(() => null)
-        if (!created) throw e
+        if (!created) {
+          // проверить нельзя (нет доступа к чужим сделкам) — второй раз не создаём, чтобы не было дубля
+          const m = e instanceof Error ? e.message : String(e)
+          throw Object.assign(new Error(`${m}. Сделка «${fields.TITLE}» могла создаться в Битрикс24 — проверьте вручную. Автоповтор остановлен, чтобы не было дубля`), { ambiguous: true })
+        }
         deal = created
       }
       await save({ deal })
     }
   } else {
-    await call('crm.deal.update', { id: Number(deal), fields })
+    try {
+      await call('crm.deal.update', { id: Number(deal), fields })
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      if (/access denied/i.test(m)) {
+        throw new Error(`Нет прав изменить сделку №${deal} в Битрикс24 (её ответственный — другой сотрудник). Дайте владельцу вебхука право «Изменение» для всех сделок этой воронки`)
+      }
+      throw e
+    }
   }
   let warning: string | null = null
   try {
     await call('crm.deal.productrows.set', { id: Number(deal), rows: productRows(p) })
   } catch (e) {
     warning = 'Товары не добавлены: ' + (e instanceof Error ? e.message : String(e)) // позиции есть в комментарии
+    console.log(`deal ${deal}: ${warning}`)
   }
   return { deal, company, contact, assigned, warning }
 }
@@ -419,7 +441,7 @@ if (typeof Deno !== 'undefined') {
     if (token) {
       const { data: ok } = await admin.rpc('daily_report_check_token', { p_token: token })
       if (!ok) return json({ error: 'Неверный токен расписания' }, 403)
-      if (action !== 'sync_pending') return json({ error: 'Расписанию доступна только досылка' }, 403)
+      if (action !== 'sync_pending' && action !== 'inspect') return json({ error: 'Расписанию доступна только досылка' }, 403)
     } else {
       const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
       const { data: u, error } = await admin.auth.getUser(jwt)
@@ -442,6 +464,27 @@ if (typeof Deno !== 'undefined') {
     const call: Call = (method, params) => {
       if (Date.now() - t0 > 120_000) return Promise.reject(new Error('Не успели за один вызов — отправится в следующий раз'))
       return rawCall(method, params)
+    }
+
+    if (action === 'inspect') {
+      if (role !== 'admin' && role !== 'cron') return json({ error: 'Доступно администратору' }, 403)
+      const out: Record<string, unknown> = {}
+      for (const id of (Array.isArray(body.deal_ids) ? body.deal_ids : []).slice(0, 20)) {
+        out['deal_' + id] = await call('crm.deal.get', { id: Number(id) }).then((d: any) => ({
+          ID: d.ID, TITLE: d.TITLE, CATEGORY_ID: d.CATEGORY_ID, STAGE_ID: d.STAGE_ID, ASSIGNED_BY_ID: d.ASSIGNED_BY_ID,
+          CREATED_BY_ID: d.CREATED_BY_ID, ORIGINATOR_ID: d.ORIGINATOR_ID, ORIGIN_ID: d.ORIGIN_ID, COMPANY_ID: d.COMPANY_ID, DATE_CREATE: d.DATE_CREATE,
+        })).catch((e: Error) => e.message)
+      }
+      for (const oid of (Array.isArray(body.origin_ids) ? body.origin_ids : []).slice(0, 20)) {
+        out['origin_' + oid] = await call('crm.deal.list', { filter: { ORIGINATOR_ID: ORIGINATOR, ORIGIN_ID: oid }, select: ['ID', 'TITLE', 'DATE_CREATE'] }).catch((e: Error) => e.message)
+      }
+      for (const t of (Array.isArray(body.titles) ? body.titles : []).slice(0, 10)) {
+        out['title_' + t] = await call('crm.deal.list', { filter: { TITLE: t }, select: ['ID', 'TITLE', 'DATE_CREATE', 'ORIGIN_ID', 'CATEGORY_ID', 'ASSIGNED_BY_ID'], order: { ID: 'ASC' } }).catch((e: Error) => e.message)
+      }
+      if (body.product_test) {
+        out.product_test = await call('crm.deal.productrows.get', { id: Number(body.product_test) }).catch((e: Error) => e.message)
+      }
+      return json(out)
     }
 
     if (action === 'duplicates' || action === 'delete_duplicates') {
@@ -539,6 +582,8 @@ if (typeof Deno !== 'undefined') {
           p_id: id, p_claimed: claimed, p_ok: false, p_error: msg, p_deal_id: null, p_company_id: null,
           p_contact_id: null, p_request_ids: [], p_assigned_id: null,
         })
+        // неясно, создалась ли сделка, — больше автоматически не повторяем
+        if ((e as { ambiguous?: boolean }).ambiguous) await admin.from('bitrix_deals').update({ attempts: 99 }).eq('id', id)
         result.errors.push(`${payload?.location?.name ?? id}: ${msg}`)
       }
     }
