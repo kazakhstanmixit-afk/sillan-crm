@@ -892,3 +892,46 @@ describe.skipIf(!TEST_DB_URL)('Битрикс24: ответственный — 
     expect((await db.sql(`select bitrix_user_id from profiles where id = $1`, [r1]))[0].bitrix_user_id).toBeNull()
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Маршрут дня без возвратов', () => {
+  let db: TestDb
+  let head: string, r1: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    head = await db.createUser('Руководитель', 'head')
+    r1 = await db.createUser('Михаил Ким', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  it('порядок объезда: от края, без зигзагов (точки вдоль улицы идут подряд)', async () => {
+    // 8 точек вдоль одной линии, перемешаны
+    const xs = [3, 7, 1, 5, 0, 6, 2, 4]
+    const rows = await db.sql(`select app.route_order(array_agg(gen_random_uuid() order by i), array_agg(51.15::float8 order by i), array_agg((71.40 + x * 0.005)::float8 order by i), null, null) as ids,
+                                      array_agg(x order by i) xs from unnest($1::int[]) with ordinality t(x, i)`, [xs])
+    // восстановить порядок по ids нельзя без связи — проверим длину пути через отдельную функцию
+    expect(rows[0].ids).toHaveLength(8)
+    const [{ len }] = await db.sql(`
+      with pts as (select i, (71.40 + x * 0.005)::float8 lng, gen_random_uuid() id from unnest($1::int[]) with ordinality t(x, i)),
+           o as (select u.id, u.n from unnest((select app.route_order(array_agg(id order by i), array_agg(51.15::float8 order by i), array_agg(lng order by i), null, null) from pts)) with ordinality u(id, n)),
+           seq as (select o.n, p.lng from o join pts p on p.id = o.id)
+      select round(sum(app.km(51.15, a.lng, 51.15, b.lng))::numeric, 3)::float len from seq a join seq b on b.n = a.n + 1`, [xs])
+    const straight = (await db.sql(`select round(app.km(51.15, 71.40, 51.15, 71.435)::numeric, 3)::float d`))[0].d
+    expect(len).toBeCloseTo(straight, 2) // путь = от одного конца до другого, без возвратов
+  })
+
+  it('день не начинается с одинокой точки на другом конце города', async () => {
+    const vals: string[] = []
+    // плотный район из 20 точек и одна точка в 9 км
+    for (let i = 0; i < 20; i++) vals.push(`('Р ${i}', 'Астана', ${51.145 + (i % 5) * 0.002}, ${71.36 + Math.floor(i / 5) * 0.003})`)
+    vals.push(`('Одинокая', 'Астана', 51.121, 71.235)`)
+    await db.sql(`insert into locations (name, city, lat, lng) values ${vals.join(',')}`)
+    await db.as(head, (q) => q(`select auto_plan('2027-02-01', 15, 150)`))
+    const days = await db.sql(`
+      select v.planned_date d, max(app.km(l.lat, l.lng, l2.lat, l2.lng)) max_leg
+        from visits v join locations l on l.id = v.location_id
+        join visits v2 on v2.plan_id = v.plan_id and v2.position = v.position + 1 join locations l2 on l2.id = v2.location_id
+       where v.manager_id = $1 group by 1 order by 1`, [r1])
+    // первый день — плотный район без скачков; одинокая точка не тянет маршрут через весь город
+    expect(days[0].max_leg).toBeLessThan(1.5)
+  })
+})
