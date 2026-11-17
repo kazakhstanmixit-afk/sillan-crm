@@ -935,3 +935,47 @@ describe.skipIf(!TEST_DB_URL)('Маршрут дня без возвратов',
     expect(days[0].max_leg).toBeLessThan(1.5)
   })
 })
+
+describe.skipIf(!TEST_DB_URL)('Визит без плана и объединение дублей', () => {
+  let db: TestDb
+  let r1: string
+  beforeAll(async () => {
+    db = await setupTestDb()
+    r1 = await db.createUser('Нұрсипат', 'rep')
+  })
+  afterAll(async () => db?.close())
+
+  it('торговый сам на точке: визит встаёт в план на сегодня (даже сверх 15) и засчитывается', async () => {
+    const today = (await db.sql(`select app.local_date(now())::text d`))[0].d
+    const locs = await db.sql(`insert into locations (name, city, manager_id) select 'P' || g, 'Астана', $1 from generate_series(1, 16) g returning id`, [r1])
+    await db.as(r1, async (q) => {
+      const [{ p }] = await q('select ensure_visit_plan($1, $2) as p', [r1, today])
+      await q('select add_plan_visits($1, $2)', [p, locs.slice(0, 15).map((l) => l.id)])
+    })
+    const [{ v }] = await db.as(r1, (q) => q(`select start_unplanned_visit($1, true, 'Новая точка') as v`, [locs[15].id]))
+    const [row] = await db.sql(`select status, result, purpose, planned_date::text d, plan_id is not null in_plan from visits where id = $1`, [v])
+    expect(row).toMatchObject({ status: 'done', result: 'Новая точка', purpose: 'Визит без плана', d: today, in_plan: true })
+    expect((await db.sql(`select count(*)::int n from visits where manager_id = $1 and planned_date = $2`, [r1, today]))[0].n).toBe(16)
+    // повторно — тот же визит, не второй
+    const [{ v: again }] = await db.as(r1, (q) => q(`select start_unplanned_visit($1) as v`, [locs[15].id]))
+    expect(again).toBe(v)
+    // точка из плана — используется её визит
+    const [{ v: planned }] = await db.as(r1, (q) => q(`select start_unplanned_visit($1) as v`, [locs[0].id]))
+    expect((await db.sql(`select purpose from visits where id = $1`, [planned]))[0].purpose).not.toBe('Визит без плана')
+    expect((await db.sql(`select last_visit_at is not null x from locations where id = $1`, [locs[15].id]))[0].x).toBe(true)
+  })
+
+  it('объединение дубля: контакты, фото, направления переходят в исходную точку, дубль — в архив', async () => {
+    const [{ id: orig }] = await db.sql(`insert into locations (name, city, lat, lng, phones) values ('Car lux service', 'Астана', 51.1, 71.4, '{+77011111111}') returning id`)
+    const [{ id: dup }] = await db.sql(`insert into locations (name, city, manager_id, phones, status_code) values ('Car lux service', 'Астана', $1, '{87022222222}', 'contacted') returning id`, [r1])
+    await db.sql(`insert into contacts (location_id, full_name) values ($1, 'Ерлан')`, [dup])
+    await db.sql(`insert into visits (location_id, manager_id, planned_date, status, actual_at, result) values ($1, $2, current_date - 30, 'done', now(), 'Был')`, [dup, r1])
+    await db.sql(`select app.merge_location($1, $2)`, [dup, orig])
+    const [o] = await db.sql(`select manager_id, status_code, phones, lat, archived_at from locations where id = $1`, [orig])
+    expect(o).toMatchObject({ manager_id: r1, status_code: 'contacted', lat: 51.1, archived_at: null })
+    expect(o.phones.sort()).toEqual(['+77011111111', '87022222222'])
+    expect((await db.sql(`select count(*)::int n from contacts where location_id = $1`, [orig]))[0].n).toBe(1)
+    expect((await db.sql(`select count(*)::int n from visits where location_id = $1 and status = 'done'`, [orig]))[0].n).toBe(1)
+    expect((await db.sql(`select archived_at is not null a from locations where id = $1`, [dup]))[0].a).toBe(true)
+  })
+})

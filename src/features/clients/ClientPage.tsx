@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, CalendarPlus, ClipboardList, MapPin, MessageCircle, Phone, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowLeft, CalendarPlus, ClipboardCheck, ClipboardList, MapPin, MessageCircle, Phone, RotateCcw, Trash2 } from 'lucide-react'
 import { Badge, Button, EmptyState, ErrorState, Spinner, Tabs, useToast } from '@/components/ui'
 import { unwrap } from '@/lib/errors'
 import { DeleteLocationsDialog } from './DeleteLocationsDialog'
@@ -22,6 +22,8 @@ import { SalesTab } from './tabs/SalesTab'
 import { HistoryTab } from './tabs/HistoryTab'
 import { AddToPlanDialog } from '@/features/visits/AddToPlanDialog'
 import { RequestFormModal } from '@/features/requests/RequestFormModal'
+import { VisitResultDialog } from '@/features/visits/VisitResultDialog'
+import type { Visit } from '@/lib/types'
 
 const TABS = ['overview', 'contacts', 'services', 'equipment', 'photos', 'comments', 'visits', 'sales', 'history'] as const
 type Tab = (typeof TABS)[number]
@@ -52,6 +54,15 @@ export default function ClientPage() {
   const [planOpen, setPlanOpen] = useState(false)
   const [requestOpen, setRequestOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [visitNow, setVisitNow] = useState<Visit | null>(null)
+  const onSite = useMutation({
+    mutationFn: async () => {
+      const vid = unwrap(await supabase.rpc('start_unplanned_visit', { p_location: id })) as string
+      return unwrap(await supabase.from('visits').select('*').eq('id', vid).single()) as Visit
+    },
+    onSuccess: (v) => { setVisitNow(v); qc.invalidateQueries({ queryKey: ['plan'] }) },
+    onError: (e) => toast.error(e),
+  })
   const qc = useQueryClient()
   const toast = useToast()
   const restore = useMutation({
@@ -100,6 +111,7 @@ export default function ClientPage() {
             {map && <a href={map} target="_blank" rel="noreferrer"><Button size="sm" icon={<MapPin className="size-3.5" />}>Карта</Button></a>}
             {!l.archived_at && (
               <>
+                {perms.role === 'rep' && <Button size="sm" variant="primary" icon={<ClipboardCheck className="size-3.5" />} loading={onSite.isPending} onClick={() => onSite.mutate()}>Я на месте</Button>}
                 <Button size="sm" icon={<CalendarPlus className="size-3.5" />} onClick={() => setPlanOpen(true)}>В план</Button>
                 <Button size="sm" icon={<ClipboardList className="size-3.5" />} onClick={() => setRequestOpen(true)}>Заявка</Button>
                 {canEdit && <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDeleteOpen(true)}>Удалить</Button>}
@@ -138,6 +150,7 @@ export default function ClientPage() {
 
       <AddToPlanDialog open={planOpen} onClose={() => setPlanOpen(false)} locationIds={[id]} />
       <RequestFormModal open={requestOpen} onClose={() => setRequestOpen(false)} locationId={id} />
+      {visitNow && <VisitResultDialog visit={visitNow} locationName={l.name} onClose={() => { setVisitNow(null); qc.invalidateQueries({ queryKey: keys.location }) }} />}
       <DeleteLocationsDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} getIds={() => [id]} label={`«${l.name}»`} onDone={() => nav('/clients')} />
     </div>
   )

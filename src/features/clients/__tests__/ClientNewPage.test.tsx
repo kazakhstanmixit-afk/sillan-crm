@@ -54,20 +54,24 @@ describe('Форма нового клиента', () => {
 
   it('двойное нажатие создаёт клиента один раз и открывает карточку', async () => {
     let resolve!: (v: unknown) => void
-    rpc.mockImplementation(() => new Promise((r) => { resolve = r }))
+    rpc.mockImplementation((name: string) => name === 'create_location'
+      ? new Promise((r) => { resolve = r })
+      : Promise.resolve({ data: 'visit-1', error: null }))
     renderPage()
     await userEvent.type(screen.getByLabelText(/Название точки/), 'СТО Мотор')
     await userEvent.click(await screen.findByRole('button', { name: 'Шиномонтаж' }))
     const btn = screen.getByRole('button', { name: 'Сохранить клиента' })
     await userEvent.click(btn)
     await userEvent.click(btn)
-    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(rpc.mock.calls.filter((c) => c[0] === 'create_location')).toHaveLength(1)
     const [name, args] = rpc.mock.calls[0] as [string, { p: Record<string, unknown> }]
     expect(name).toBe('create_location')
     expect(args.p).toMatchObject({ name: 'СТО Мотор', direction_ids: ['d2'], status_code: 'new' })
     expect(args.p.client_request_id).toMatch(/^[0-9a-f-]{36}$/)
     resolve({ data: 'loc-1', error: null })
     expect(await screen.findByText('Карточка открыта')).toBeInTheDocument()
+    // торговый добавил точку на месте — визит засчитан
+    expect(rpc).toHaveBeenCalledWith('start_unplanned_visit', { p_location: 'loc-1', p_done: true, p_note: 'Новая точка — добавлена на месте' })
   })
 
   it('при ошибке сервера не теряет введённые данные', async () => {

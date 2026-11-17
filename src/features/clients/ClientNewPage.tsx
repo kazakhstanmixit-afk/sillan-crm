@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm, Controller } from 'react-hook-form'
 import { z } from 'zod'
@@ -47,6 +47,14 @@ export default function ClientNewPage() {
   const toast = useToast()
   const requestId = useRef(crypto.randomUUID())
   const [company, setCompany] = useState<CompanyChoice>({ kind: 'none' })
+  // торговый добавляет точку на месте: берём координаты с телефона, визит засчитываем сразу
+  const isRep = perms.role === 'rep'
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
+  useEffect(() => {
+    if (!isRep || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition((p) => setCoords({ lat: p.coords.latitude, lng: p.coords.longitude }), () => undefined,
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 })
+  }, [isRep])
 
   const { register, handleSubmit, control, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(newClientSchema),
@@ -58,8 +66,8 @@ export default function ClientNewPage() {
   })
 
   const mut = useMutation({
-    mutationFn: async (v: Form) =>
-      unwrap(await supabase.rpc('create_location', {
+    mutationFn: async (v: Form) => {
+      const id = unwrap(await supabase.rpc('create_location', {
         p: {
           client_request_id: requestId.current,
           name: v.name,
@@ -80,9 +88,16 @@ export default function ClientNewPage() {
           contact: { full_name: v.contact_name, position: v.contact_position, phone: v.contact_phone, decision_role: v.contact_role },
           comment: v.comment,
         },
-      })) as string,
+      })) as string
+      if (isRep) {
+        if (coords) await supabase.from('locations').update({ lat: coords.lat, lng: coords.lng }).eq('id', id)
+        unwrap(await supabase.rpc('start_unplanned_visit', { p_location: id, p_done: true, p_note: 'Новая точка — добавлена на месте' }))
+      }
+      return id
+    },
     onSuccess: (id) => {
-      toast.success('Клиент добавлен')
+      toast.success(isRep ? 'Клиент добавлен, визит засчитан в план на сегодня' : 'Клиент добавлен')
+      qc.invalidateQueries({ queryKey: ['plan'] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       nav(`/clients/${id}`, { replace: true })
     },
@@ -91,7 +106,7 @@ export default function ClientNewPage() {
 
   return (
     <form onSubmit={handleSubmit((v) => mut.mutate(v))} noValidate className="mx-auto max-w-4xl space-y-4">
-      <PageHeader title="Новый клиент" subtitle="Физическая точка обслуживания. Компания (юрлицо) — по желанию." />
+      <PageHeader title="Новый клиент" subtitle={isRep ? 'Вы на месте: визит в эту точку засчитается сегодня, место возьмётся с телефона.' : 'Физическая точка обслуживания. Компания (юрлицо) — по желанию.'} />
 
       <Card title="Основное">
         <div className="grid gap-3 sm:grid-cols-2">

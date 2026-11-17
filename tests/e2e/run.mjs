@@ -318,7 +318,11 @@ await step('новая точка по пути: торговый сам доб�
   await page.keyboard.press('Escape')
   await page.locator('ol > li', { hasText: 'СТО Найдено по пути' }).waitFor()
   await page.goto(base + '/clients')
-  await page.getByText('СТО Найдено по пути').waitFor()
+  await page.getByText('СТО Найдено по пути').first().click()
+  await page.getByRole('button', { name: 'Я на месте' }).click()
+  await page.getByRole('dialog').getByText(/Отчёт о визите|Результат визита/).first().waitFor()
+  await shot('client-on-site')
+  await page.keyboard.press('Escape')
 })
 
 await step('дашборд торгового представителя считает реальные данные', async () => {
