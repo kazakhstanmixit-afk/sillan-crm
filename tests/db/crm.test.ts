@@ -744,6 +744,25 @@ describe.skipIf(!TEST_DB_URL)('Удаление точки и приоритет
     expect(rows.filter((r) => r.name.startsWith('Астана ')).length).toBe(30)
     expect(firstRegion > lastAstana).toBe(true)
   })
+
+  it('автоплан: автосалоны — в самом конце, после регионов, и не смешиваются с обычными точками', async () => {
+    const vals: string[] = []
+    // салоны стоят прямо среди обычных точек — всё равно уходят в конец
+    for (let i = 0; i < 6; i++) vals.push(`('Салон ${i}', 'Астана', ${51.121 + i * 0.004}, ${71.421}, 'Продажа легковых автомобилей, Легковой автосервис')`)
+    vals.push(`('Автосалон Тест', 'Астана', 51.125, 71.425, null)`)
+    vals.push(`('Шиномонтаж у салона', 'Астана', 51.1215, 71.4215, 'Шиномонтаж')`)
+    await db.sql(`delete from visits`)
+    await db.sql(`insert into locations (name, city, lat, lng, source_category) values ${vals.join(',')}`)
+    await db.as(head, (q) => q(`select auto_plan('2027-03-01', 15, 150)`))
+    const rows = await db.sql(`select l.name, v.planned_date::text d from visits v join locations l on l.id = v.location_id where v.status = 'planned' and v.auto_planned`)
+    const dealer = (n: string) => n.startsWith('Салон') || n === 'Автосалон Тест'
+    const dealerDays = new Set(rows.filter((r) => dealer(r.name)).map((r) => r.d))
+    expect(rows.filter((r) => dealer(r.name)).length).toBe(7)
+    expect(rows.some((r) => !dealer(r.name) && dealerDays.has(r.d))).toBe(false)
+    const lastOther = rows.filter((r) => !dealer(r.name)).map((r) => r.d).sort().at(-1)!
+    const firstDealer = [...dealerDays].sort()[0]
+    expect(firstDealer > lastOther).toBe(true)
+  })
 })
 
 describe.skipIf(!TEST_DB_URL)('Ежедневный отчёт в Битрикс24', () => {
