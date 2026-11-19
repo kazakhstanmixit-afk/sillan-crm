@@ -954,6 +954,32 @@ describe.skipIf(!TEST_DB_URL)('Маршрут дня без возвратов',
     // первый день — плотный район без скачков; одинокая точка не тянет маршрут через весь город
     expect(days[0].max_leg).toBeLessThan(1.5)
   })
+
+  it('следующий день продолжает тот же район, пока там есть точки; посещённые дубли не планируются', async () => {
+    await db.sql(`delete from visits`)
+    await db.sql(`update locations set archived_at = now() where archived_at is null`)
+    const vals: string[] = []
+    // два района в 6 км друг от друга, по 40 точек
+    for (let i = 0; i < 40; i++) vals.push(`('А ${i}', 'Астана', ${51.10 + (i % 8) * 0.0015}, ${71.40 + Math.floor(i / 8) * 0.002}, null)`)
+    for (let i = 0; i < 40; i++) vals.push(`('Б ${i}', 'Астана', ${51.15 + (i % 8) * 0.0015}, ${71.45 + Math.floor(i / 8) * 0.002}, null)`)
+    // уже посещённая точка и её вторая карточка (тот же телефон, 40 м)
+    vals.push(`('Посещённая', 'Астана', 51.13, 71.43, '{+77011112233}')`)
+    vals.push(`('Её дубль', 'Астана', 51.1303, 71.4302, '{+77011112233}')`)
+    await db.sql(`insert into locations (name, city, lat, lng, phones) values ${vals.map((v) => v.replace(/, null\)$/, ", '{}')")).join(',')}`)
+    const [{ id: seen }] = await db.sql(`select id from locations where name = 'Посещённая'`)
+    const [{ id: plan }] = await db.sql(`insert into visit_plans (manager_id, plan_date) values ($1, '2026-10-01') returning id`, [r1])
+    await db.sql(`insert into visits (plan_id, location_id, manager_id, planned_date, position, status, actual_at) values ($1, $2, $3, '2026-10-01', 1, 'done', now())`, [plan, seen, r1])
+    await db.as(head, (q) => q(`select auto_plan('2027-04-01', 15, 150)`))
+    const rows = await db.sql(`select l.name, v.manager_id, v.planned_date::text d from visits v join locations l on l.id = v.location_id
+                                where v.status = 'planned' and v.auto_planned order by v.manager_id, v.planned_date, v.position`)
+    expect(rows.some((r) => r.name === 'Её дубль')).toBe(false)
+    // у каждого торгового район меняется не больше одного раза: А…А Б…Б, без «А Б А»
+    for (const m of new Set(rows.map((r) => r.manager_id))) {
+      const seq = rows.filter((r) => r.manager_id === m).map((r) => r.name[0])
+      const switches = seq.filter((x, i) => i > 0 && x !== seq[i - 1]).length
+      expect(switches).toBeLessThanOrEqual(1)
+    }
+  })
 })
 
 describe.skipIf(!TEST_DB_URL)('Визит без плана и объединение дублей', () => {
