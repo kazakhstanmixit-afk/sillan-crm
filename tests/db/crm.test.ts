@@ -980,6 +980,26 @@ describe.skipIf(!TEST_DB_URL)('Маршрут дня без возвратов',
       expect(switches).toBeLessThanOrEqual(1)
     }
   })
+
+  it('дубль по адресу: та же точка, заведённая вручную, не планируется; соседний бизнес по тому же адресу — планируется', async () => {
+    await db.sql(`delete from visits`)
+    await db.sql(`update locations set archived_at = now() where archived_at is null`)
+    await db.sql(`insert into locations (name, city, lat, lng, source_address) values
+      ('DGS avto', 'Астана', 51.10414, 71.43449, 'Аккум 21/11'),
+      ('Dgs_Avto, автосервис', 'Астана', 51.10691, 71.43975, 'улица Аккум, 21/11'),
+      ('GR8Garage, автомойка', 'Астана', 51.12, 71.40, 'улица Достык, 3'),
+      ('Корме, автомойка', 'Астана', 51.1201, 71.4001, 'улица Достык, 3')`)
+    const ids = await db.sql(`select id, name from locations where archived_at is null`)
+    const id = (n: string) => ids.find((r) => r.name === n)!.id
+    const [{ id: plan }] = await db.sql(`insert into visit_plans (manager_id, plan_date) values ($1, '2026-10-02') returning id`, [r1])
+    for (const [i, n] of ['DGS avto', 'GR8Garage, автомойка'].entries()) {
+      await db.sql(`insert into visits (plan_id, location_id, manager_id, planned_date, position, status, actual_at) values ($1, $2, $3, '2026-10-02', $4, 'done', now())`, [plan, id(n), r1, i + 1])
+    }
+    await db.as(head, (q) => q(`select auto_plan('2027-05-03', 15, 150)`))
+    const planned = (await db.sql(`select l.name from visits v join locations l on l.id = v.location_id where v.status = 'planned'`)).map((r) => r.name)
+    expect(planned).not.toContain('Dgs_Avto, автосервис')
+    expect(planned).toContain('Корме, автомойка')
+  })
 })
 
 describe.skipIf(!TEST_DB_URL)('Визит без плана и объединение дублей', () => {
@@ -1023,5 +1043,33 @@ describe.skipIf(!TEST_DB_URL)('Визит без плана и объедине�
     expect((await db.sql(`select count(*)::int n from contacts where location_id = $1`, [orig]))[0].n).toBe(1)
     expect((await db.sql(`select count(*)::int n from visits where location_id = $1 and status = 'done'`, [orig]))[0].n).toBe(1)
     expect((await db.sql(`select archived_at is not null a from locations where id = $1`, [dup]))[0].a).toBe(true)
+  })
+
+  it('«Новый клиент»: CRM находит точку из базы у другого торгового, «Это она» забирает её без дубля', async () => {
+    const r2 = await db.createUser('Алишер', 'rep')
+    const [{ id: base }] = await db.sql(`insert into locations (name, city, lat, lng, source_address, manager_id, source)
+      values ('Dgs_Avto, автосервис', 'Астана', 51.10691, 71.43975, 'улица Аккум, 21/11', $1, '2gis') returning id`, [r2])
+    const [{ id: plan }] = await db.sql(`insert into visit_plans (manager_id, plan_date) values ($1, current_date + 10) returning id`, [r2])
+    await db.sql(`insert into visits (plan_id, location_id, manager_id, planned_date, position) values ($1, $2, $3, current_date + 10, 1)`, [plan, base, r2])
+    // торговый вводит «DGS avto», адрес по-своему, стоит в 450 м
+    const found = await db.as(r1, (q) => q(`select * from find_existing_points('DGS avto', 'Аккум 21/11', 51.10414, 71.43449, null)`))
+    expect(found.map((f) => f.id)).toContain(base)
+    expect(found.find((f) => f.id === base)).toMatchObject({ mine: false, manager_name: 'Алишер' })
+    // и по телефону, без названия
+    await db.sql(`update locations set phones = '{+7 775 320 47 18}' where id = $1`, [base])
+    const byPhone = await db.as(r1, (q) => q(`select id from find_existing_points('', null, null, null, '{87753204718}')`))
+    expect(byPhone.map((f) => f.id)).toContain(base)
+    // соседний бизнес по тому же адресу не путается
+    const other = await db.as(r1, (q) => q(`select id from find_existing_points('Garage 21', 'улица Аккум, 21/11', null, null, null)`))
+    expect(other.map((f) => f.id)).not.toContain(base)
+    // «Это она — я на месте»
+    await db.as(r1, (q) => q(`select claim_location($1)`, [base]))
+    expect((await db.sql(`select manager_id from locations where id = $1`, [base]))[0].manager_id).toBe(r1)
+    expect((await db.sql(`select status from visits where location_id = $1 and manager_id = $2`, [base, r2]))[0].status).toBe('cancelled')
+    const [{ v }] = await db.as(r1, (q) => q(`select start_unplanned_visit($1, true) as v`, [base]))
+    expect(v).toBeTruthy()
+    // аноним ничего не видит
+    await expect(db.sql(`begin; set local role anon; select * from find_existing_points('Dgs', null, null, null, null); commit;`)).rejects.toThrow()
+    await db.sql('rollback')
   })
 })

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, CalendarPlus, ClipboardCheck, ClipboardList, MapPin, MessageCircle, Phone, RotateCcw, Trash2 } from 'lucide-react'
@@ -65,6 +65,14 @@ export default function ClientPage() {
   })
   const qc = useQueryClient()
   const toast = useToast()
+  // пришли из «Нового клиента» кнопкой «Это она — я на месте» — сразу открываем результат визита
+  const autoOnSite = useRef(false)
+  useEffect(() => {
+    if (params.get('onsite') !== '1' || perms.role !== 'rep' || autoOnSite.current) return
+    autoOnSite.current = true
+    const next = new URLSearchParams(params); next.delete('onsite'); setParams(next, { replace: true })
+    onSite.mutate()
+  }, [params, perms.role, setParams, onSite])
   const restore = useMutation({
     mutationFn: async () => unwrap(await supabase.rpc('restore_locations', { p_ids: [id] })),
     onSuccess: () => { toast.success('Точка восстановлена'); qc.invalidateQueries({ queryKey: ['clients'] }); qc.invalidateQueries({ queryKey: keys.location }) },

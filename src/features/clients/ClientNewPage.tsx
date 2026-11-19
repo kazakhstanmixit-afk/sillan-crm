@@ -13,6 +13,8 @@ import { splitPhones } from '@/lib/phone'
 import { DECISION_ROLE_LABEL } from '@/lib/labels'
 import { CompanyPicker, type CompanyChoice } from './CompanyPicker'
 
+type ExistingPoint = { id: string; name: string; address: string | null; meters: number | null; manager_name: string | null; visited: boolean; mine: boolean }
+
 const optInt = z.union([z.literal(''), z.coerce.number().int('Целое число').min(0, 'Не меньше 0').max(500, 'Слишком большое значение')])
 
 export const newClientSchema = z.object({
@@ -56,13 +58,35 @@ export default function ClientNewPage() {
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 })
   }, [isRep])
 
-  const { register, handleSubmit, control, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, control, watch, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(newClientSchema),
     defaultValues: {
       name: '', client_type: '', status_code: 'new', city: '', district: '', address: '', address_note: '', phones: '', website: '',
       posts_count: '', lifts_count: '', direction_ids: [], manager_id: '', contact_name: '', contact_position: '', contact_phone: '',
       contact_role: '', comment: '', bin: '', legal_name: '',
     },
+  })
+
+  // такая точка уже есть в базе? (ищем по всей базе, в том числе у другого торгового)
+  const [name, address, phones] = watch(['name', 'address', 'phones'])
+  const [matches, setMatches] = useState<ExistingPoint[]>([])
+  useEffect(() => {
+    if (name.trim().length < 3 && splitPhones(phones).length === 0) { setMatches([]); return }
+    const t = setTimeout(async () => {
+      const { data } = await supabase.rpc('find_existing_points', {
+        p_name: name, p_address: address || null, p_lat: coords?.lat ?? null, p_lng: coords?.lng ?? null, p_phones: splitPhones(phones),
+      })
+      setMatches(Array.isArray(data) ? (data as ExistingPoint[]) : [])
+    }, 500)
+    return () => clearTimeout(t)
+  }, [name, address, phones, coords])
+  const claim = useMutation({
+    mutationFn: async (id: string) => { unwrap(await supabase.rpc('claim_location', { p_location: id })); return id },
+    onSuccess: (id) => {
+      qc.invalidateQueries({ queryKey: ['plan'] })
+      nav(`/clients/${id}?onsite=1`, { replace: true })
+    },
+    onError: (e) => toast.error(e),
   })
 
   const mut = useMutation({
@@ -137,6 +161,28 @@ export default function ClientNewPage() {
           )}
         </div>
       </Card>
+
+      {matches.length > 0 && (
+        <Card title="Похоже, эта точка уже есть в базе">
+          <p className="mb-2 text-sm text-slate-600">Если это она — не создавайте новую карточку, иначе точка задвоится в планах.</p>
+          <ul className="space-y-2">
+            {matches.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <div className="min-w-0 text-sm">
+                  <div className="font-medium text-slate-900">{m.name}</div>
+                  <div className="text-slate-600">
+                    {[m.address, m.meters != null ? `${m.meters} м от вас` : null, m.visited ? 'уже посещена' : null,
+                      m.mine ? 'ваша точка' : m.manager_name ? `у ${m.manager_name}` : null].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                {isRep
+                  ? <Button size="sm" variant="primary" loading={claim.isPending && claim.variables === m.id} disabled={claim.isPending} onClick={() => claim.mutate(m.id)}>Это она — я на месте</Button>
+                  : <Button size="sm" onClick={() => nav(`/clients/${m.id}`)}>Открыть</Button>}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Card title="Направления деятельности">
         <Controller control={control} name="direction_ids" render={({ field }) => (
