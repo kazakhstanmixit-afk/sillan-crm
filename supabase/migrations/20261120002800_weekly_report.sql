@@ -47,6 +47,33 @@ returns table (
    order by coalesce(v.done, 0) desc, p.full_name
 $$;
 
+-- разбивка по дням: «Пн 16.11 — 15 точек (новых на месте 3), заявки: сервис 1»; дни без работы не пишутся
+create or replace function app.weekly_report_days(p_manager uuid, p_from date, p_to date)
+returns text language sql stable as $$
+  with d as (select g::date d from generate_series(p_from, p_to, interval '1 day') g),
+  v as (select app.local_date(v.actual_at) d, count(*) n,
+               count(*) filter (where v.purpose in ('Визит без плана', 'Новая точка по пути')) found
+          from public.visits v where v.manager_id = p_manager and v.status = 'done'
+           and app.local_date(v.actual_at) between p_from and p_to group by 1),
+  r as (select app.local_date(q.created_at) d,
+               count(*) filter (where q.kind = 'service') s, count(*) filter (where q.kind = 'parts') p,
+               count(*) filter (where q.kind = 'equipment') e
+          from public.requests q where q.initiator_id = p_manager
+           and app.local_date(q.created_at) between p_from and p_to group by 1)
+  select string_agg(
+           (array['Пн','Вт','Ср','Чт','Пт','Сб','Вс'])[extract(isodow from d.d)::int] || ' ' || to_char(d.d, 'DD.MM') || ' — '
+           || coalesce(v.n, 0) || ' ' || case when coalesce(v.n,0) % 10 = 1 and coalesce(v.n,0) % 100 <> 11 then 'точка'
+                when coalesce(v.n,0) % 10 between 2 and 4 and coalesce(v.n,0) % 100 not between 12 and 14 then 'точки' else 'точек' end
+           || case when coalesce(v.found, 0) > 0 then ' (новых на месте ' || v.found || ')' else '' end
+           || case when coalesce(r.s + r.p + r.e, 0) > 0 then ', заявки: ' || concat_ws(', ',
+                case when r.s > 0 then 'сервис ' || r.s end, case when r.p > 0 then 'запчасти ' || r.p end,
+                case when r.e > 0 then 'оборудование ' || r.e end) else '' end,
+           E'\n' order by d.d)
+    from d left join v on v.d = d.d left join r on r.d = d.d
+   where coalesce(v.n, 0) + coalesce(r.s + r.p + r.e, 0) > 0
+$$;
+revoke execute on function app.weekly_report_days(uuid, date, date) from public, anon;
+
 create or replace function app.weekly_report_text(p_from date, p_to date)
 returns text language plpgsql stable as $$
 declare
@@ -66,7 +93,7 @@ begin
   msg := '[B]Отчёт торговых представителей за неделю ' || to_char(p_from, 'DD.MM') || '–' || to_char(p_to, 'DD.MM.YYYY') || '[/B]';
 
   for x in select * from app.weekly_report_rows(p_from, p_to) loop
-    msg := msg || E'\n\n[B]' || x.full_name || '[/B]';
+    msg := msg || E'\n\n[B]' || x.full_name || '[/B]' || coalesce(E'\n' || app.weekly_report_days(x.manager_id, p_from, p_to), '');
     if x.done > 0 then
       msg := msg || E'\nПосещено точек: ' || x.done
         || ' за ' || x.work_days || ' ' || case when x.work_days = 1 then 'день' when x.work_days between 2 and 4 then 'дня' else 'дней' end
