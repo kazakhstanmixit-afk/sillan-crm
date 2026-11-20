@@ -50,12 +50,16 @@ Deno.serve(async (req) => {
 
   let body: Record<string, unknown> = {}
   try { body = await req.json() } catch { /* пустое тело */ }
-  const date = typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : todayAstana()
+  const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
+  const date = isDate(body.date) ? body.date : todayAstana()
+  // недельный отчёт: { period: 'week', from?, to? } — по умолчанию с понедельника по сегодня
+  const week = body.period === 'week'
 
   const { data: setting } = await admin.from('app_settings').select('value').eq('key', 'daily_report').maybeSingle()
   const cfg = (setting?.value ?? {}) as Record<string, unknown>
-  if (!manual && !cfg.enabled) return json({ skipped: 'Отправка выключена' })
-  const recipient = String(cfg.recipient_id ?? '').trim()
+  if (!manual && !cfg.enabled && !body.recipient) return json({ skipped: 'Отправка выключена' })
+  // разовая отправка другому получателю (например, тестовая) — не меняя настроек
+  const recipient = String(/^\d+$/.test(String(body.recipient ?? '')) ? body.recipient : cfg.recipient_id ?? '').trim()
   if (!/^\d+$/.test(recipient)) return json({ error: 'В настройках CRM не указан ID получателя в Битрикс24' }, 400)
 
   const webhook = (Deno.env.get('BITRIX_REPORT_WEBHOOK') ?? '').trim()
@@ -64,10 +68,13 @@ Deno.serve(async (req) => {
   }
 
   const save = async (patch: Record<string, unknown>) => {
+    if (week || body.recipient) return
     await admin.from('app_settings').update({ value: { ...cfg, ...patch }, updated_at: new Date().toISOString() }).eq('key', 'daily_report')
   }
 
-  const { data: text, error: textErr } = await admin.rpc('daily_report_preview', { p_date: date })
+  const { data: text, error: textErr } = week
+    ? await admin.rpc('weekly_report_preview', { p_from: isDate(body.from) ? body.from : null, p_to: isDate(body.to) ? body.to : date })
+    : await admin.rpc('daily_report_preview', { p_date: date })
   if (textErr) return json({ error: 'Не удалось собрать отчёт: ' + textErr.message }, 500)
   if (!text) {
     await save({ last_run_at: new Date().toISOString(), last_result: `${date}: работы не было — не отправлено` })
