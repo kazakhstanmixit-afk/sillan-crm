@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, CalendarX, Route, CheckCircle2, ChevronLeft, ChevronRight, MapPin, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from 'lucide-react'
-import { Badge, Button, Card, ConfirmDialog, EmptyState, Input, PageHeader, QueryState, Select, Textarea, useToast } from '@/components/ui'
+import { ArrowDown, ArrowUp, CalendarX, Route, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet, MapPin, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from 'lucide-react'
+import { Badge, Button, Card, ConfirmDialog, EmptyState, Field, Input, Modal, PageHeader, QueryState, Select, Textarea, useToast } from '@/components/ui'
+import { exportPlanXlsx } from './planExport'
 import { useAuth, usePerms } from '@/auth/AuthProvider'
 import { useDicts } from '@/lib/dictionaries'
 import { supabase } from '@/lib/supabase'
@@ -105,15 +106,20 @@ export default function PlanPage() {
   const [deleting, setDeleting] = useState<PlanVisit | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
 
+  const [exportOpen, setExportOpen] = useState(false)
   const done = visits.filter((v) => v.status === 'done').length
   const planned = visits.filter((v) => v.status === 'planned').length
 
   return (
     <div className="mx-auto max-w-4xl">
+      {exportOpen && <PlanExportDialog from={date} onClose={() => setExportOpen(false)} />}
       <PageHeader
         title="План посещений"
         subtitle="Список точек на день в нужном порядке. Кнопка «Карта» открывает маршрут до точки в 2GIS."
-        actions={canManage && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAddOpen(true)}>Добавить точки</Button>}
+        actions={<div className="flex flex-wrap gap-2">
+          {perms.view_team && <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setExportOpen(true)}>План в Excel</Button>}
+          {canManage && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAddOpen(true)}>Добавить точки</Button>}
+        </div>}
       />
       <Card className="mb-3" bodyClassName="flex flex-wrap items-center gap-2 p-3">
         <Button size="sm" variant="ghost" aria-label="Предыдущий день" onClick={() => shiftDate(-1)}><ChevronLeft className="size-4" /></Button>
@@ -256,5 +262,28 @@ function MenuItem({ children, onClick, icon, danger }: { children: React.ReactNo
     <button onClick={onClick} className={`flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-slate-50 ${danger ? 'text-rose-600' : 'text-slate-700'}`}>
       {icon ?? <span className="size-3.5" />}{children}
     </button>
+  )
+}
+
+/** Выгрузка плана всех торговых за период — для руководства */
+function PlanExportDialog({ from: initial, onClose }: { from: string; onClose: () => void }) {
+  const toast = useToast()
+  const plusMonth = (iso: string) => { const x = parseDateOnly(iso); x.setMonth(x.getMonth() + 1); x.setDate(x.getDate() - 1); return toISODate(x) }
+  const [from, setFrom] = useState(initial)
+  const [to, setTo] = useState(plusMonth(initial))
+  const run = useMutation({
+    mutationFn: () => exportPlanXlsx(from, to),
+    onSuccess: (r) => { toast.success(`Файл готов: ${r.points} точек, торговых — ${r.reps}`); onClose() },
+    onError: (e) => toast.error(e),
+  })
+  return (
+    <Modal open onClose={onClose} title="План посещений в Excel" size="sm"
+      footer={<><Button onClick={onClose}>Отмена</Button><Button variant="primary" loading={run.isPending} disabled={!from || !to || to < from} onClick={() => run.mutate()}>Скачать</Button></>}>
+      <p className="mb-3 text-sm text-slate-600">Все торговые: сводка по неделям и отдельный лист на каждого — дни, точки в порядке объезда, адреса и телефоны.</p>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="С">{(id) => <Input id={id} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />}</Field>
+        <Field label="По">{(id) => <Input id={id} type="date" value={to} onChange={(e) => setTo(e.target.value)} />}</Field>
+      </div>
+    </Modal>
   )
 }
